@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sahayak – OPD Assistant | AIIMS</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=Playfair+Display:wght@500;600&family=Noto+Sans+Devanagari:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="phone-shell">
+
+  <!-- VOICE OVERLAY -->
+  <div class="voice-overlay" id="voiceOverlay">
+    <div class="voice-wave-wrap">
+      <div class="voice-ring"></div><div class="voice-ring"></div><div class="voice-ring"></div>
+      <div class="voice-mic-circle">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8" y1="23" x2="16" y2="23"/>
+        </svg>
+      </div>
+    </div>
+    <div class="audio-bars">
+      <div class="bar"></div><div class="bar"></div><div class="bar"></div>
+      <div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div>
+    </div>
+    <div class="voice-text-block">
+      <span class="voice-label-hi">सुन रहा हूँ… बोलिए</span>
+      <span class="voice-label-en">Listening… Please speak</span>
+    </div>
+    <div class="voice-text-block">
+      <span class="voice-hint-hi">हिंदी या अंग्रेज़ी — दोनों चलेंगी</span>
+      <span class="voice-hint-en">Hindi or English — both are welcome</span>
+    </div>
+    <button class="voice-cancel-btn" id="cancelVoice">
+      <span class="cancel-hi">रोकें</span> &nbsp;·&nbsp; Stop
+    </button>
+  </div>
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-inner">
+      <div class="logo-wrap">
+        <svg viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="11" y="3" width="6" height="22" rx="3" fill="white" opacity="0.92"/>
+          <rect x="3" y="11" width="22" height="6" rx="3" fill="white" opacity="0.92"/>
+          <circle cx="14" cy="14" r="3" fill="rgba(255,255,255,0.25)"/>
+        </svg>
+      </div>
+      <div class="header-text">
+        <div class="app-name">Sahayak</div>
+        <div class="tagline-wrap">
+          <span class="tagline-hindi">सही OPD, सही डॉक्टर</span>
+          <span class="tagline-en">Right OPD · Right Doctor</span>
+        </div>
+      </div>
+      <div class="status-badge">
+        <div class="status-dot"></div>
+        Online
+      </div>
+    </div>
+    <div class="aiims-strip">
+      <div class="aiims-strip-hi">अखिल भारतीय आयुर्विज्ञान संस्थान<br>नई दिल्ली</div>
+      <div class="aiims-strip-en">All India Institute of<br>Medical Sciences, New Delhi</div>
+    </div>
+    <div class="dev-credit">Developed by Rahul Rathee</div>
+  </div>
+
+  <!-- CHAT AREA -->
+  <div class="chat-area" id="chatArea">
+
+    <!-- Compact welcome card -->
+    <div class="welcome-card">
+      <div class="welcome-avatar">🩺</div>
+      <div class="welcome-body">
+        <div class="welcome-title-hi">नमस्ते! मैं Sahayak हूँ।</div>
+        <div class="welcome-title-en">Hello! I am Sahayak, your OPD guide.</div>
+        <div class="welcome-desc-hi">अपनी तकलीफ बताइए — मैं सही विभाग और डॉक्टर तक पहुँचाऊँगा।</div>
+        <div class="welcome-desc-en">Tell me your symptoms and I'll guide you to the right department.</div>
+      </div>
+    </div>
+
+    <!-- Quick suggestion chips -->
+    <div class="chips-wrap">
+      <div class="chip-label">जल्दी पूछें · Quick ask</div>
+      <button class="chip" onclick="fillInput('सिरदर्द हो रहा है')">
+        <span class="chip-hi">सिरदर्द</span>
+        <span class="chip-en">Headache</span>
+      </button>
+      <button class="chip" onclick="fillInput('आँख में दर्द और जलन है')">
+        <span class="chip-hi">आँख में दर्द</span>
+        <span class="chip-en">Eye pain</span>
+      </button>
+      <button class="chip" onclick="fillInput('बुखार और खाँसी है')">
+        <span class="chip-hi">बुखार / खाँसी</span>
+        <span class="chip-en">Fever / Cough</span>
+      </button>
+      <button class="chip" onclick="fillInput('पेट में दर्द है')">
+        <span class="chip-hi">पेट दर्द</span>
+        <span class="chip-en">Stomach ache</span>
+      </button>
+      <button class="chip" onclick="fillInput('हड्डी में दर्द है')">
+        <span class="chip-hi">हड्डी दर्द</span>
+        <span class="chip-en">Bone pain</span>
+      </button>
+      <button class="chip" onclick="fillInput('चमड़ी पर दाने निकल रहे हैं')">
+        <span class="chip-hi">त्वचा की समस्या</span>
+        <span class="chip-en">Skin problem</span>
+      </button>
+    </div>
+
+    <!-- Bot ready message -->
+    <div class="bot-row">
+      <div class="avatar-sm">🩺</div>
+      <div class="bot-bubble">
+        <span class="hi">मैं तैयार हूँ। बताइए, क्या तकलीफ है?</span>
+        <span class="en">I am ready. Please tell me your concern.</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- INPUT BAR -->
+  <div class="input-bar">
+    <div class="input-row">
+      <input type="text" id="chatInput" placeholder="लिखें या बोलें… · Type or speak…">
+      <button class="voice-btn" id="voiceBtn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8" y1="23" x2="16" y2="23"/>
+        </svg>
+      </button>
+      <button class="send-btn" id="sendBtn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"/>
+          <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+        </svg>
+      </button>
+    </div>
+    <div class="footer-credit">Developed by <span>Rahul Rathee</span> &nbsp;·&nbsp; सही OPD, सही डॉक्टर</div>
+  </div>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

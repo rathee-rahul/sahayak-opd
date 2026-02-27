@@ -1,0 +1,31 @@
+# AIIMS OPD Department List
+
+DEPARTMENTS = [
+    "Medicine (General)",
+    "Paediatrics (Children)",
+    "Surgery (General)",
+    "Obstetrics & Gynaecology",
+    "Orthopaedics (Bones & Joints)",
+    "Dermatology & Venereology (Skin)",
+    "Otorhinolaryngology - ENT (Ear, Nose & Throat)",
+    "Psychiatry (Mental Health)",
+    "Urology (Kidney & Urinary)",
+    "Gastroenterology (Stomach & Digestion)",
+    "G.I. Surgery (Stomach Surgery)",
+    "Nephrology (Kidney Disease)",
+    "Endocrinology (Diabetes & Hormones)",
+    "Geriatric Medicine (Elderly Care)",
+    "Rheumatology (Joint & Autoimmune)",
+    "Physical Medicine & Rehabilitation",
+    "Haematology (Blood Disorders)",
+    "Burns & Plastic Surgery",
+    "Paediatric Surgery (Children Surgery)",
+    "Cardiology (Heart)",
+    "Cardiothoracic & Vascular Surgery (Heart Surgery)",
+    "Neurology (Brain & Nerves)",
+    "Neurosurgery (Brain Surgery)",
+    "Ophthalmology (Eyes)",
+    "Dental Surgery",
+    "Oncology (Cancer)",
+    "Casualty / Emergency"
+]

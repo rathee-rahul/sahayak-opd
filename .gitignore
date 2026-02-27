@@ -1,0 +1,17 @@
+# Secret keys - never upload these
+backend/.env
+
+# Python virtual environment - too large to upload
+backend/venv/
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# VS Code settings
+.vscode/
+
+# Windows files
+Thumbs.db
+desktop.ini
