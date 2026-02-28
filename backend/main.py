@@ -4,6 +4,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import os
+import sys
+
+# Fix import path for both local and Render
+sys.path.insert(0, os.path.dirname(__file__))
+
 from groq import Groq
 from prompt import SYSTEM_PROMPT
 
@@ -19,7 +24,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Works both locally and on Render
 frontend_path = os.path.join(os.path.dirname(__file__), "../frontend")
 app.mount("/app", StaticFiles(directory=frontend_path, html=True), name="frontend")
 
@@ -54,3 +58,17 @@ def home():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+```
+
+After saving, we need to push this fix to GitHub. Run these commands in Command Prompt:
+```
+cd C:\Users\Dell\opd-assistant
+```
+```
+git add .
+```
+```
+git commit -m "Fix import path for Render deployment"
+```
+```
+git push
