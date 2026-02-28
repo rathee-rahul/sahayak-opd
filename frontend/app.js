@@ -1,9 +1,9 @@
 // ============================================================
 //  SAHAYAK — AIIMS OPD Assistant  |  app.js
-//  Connects to FastAPI backend at http://127.0.0.1:8000/chat
+//  Connects to FastAPI backend at https://sahayak-opd.onrender.com/chat
 // ============================================================
 
-const BACKEND_URL = "http://127.0.0.1:8000/chat";
+const BACKEND_URL = "https://sahayak-opd.onrender.com/chat";
 
 // ── DOM elements ──
 const chatArea     = document.getElementById("chatArea");
