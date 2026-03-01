@@ -1,257 +1,337 @@
-// ============================================================
-//  SAHAYAK — AIIMS OPD Assistant  |  app.js
-//  Connects to FastAPI backend at https://sahayak-opd.onrender.com/chat
-// ============================================================
-
+// ─── CONFIG ───────────────────────────────────────────────────────────────────
 const BACKEND_URL = "https://sahayak-opd.onrender.com/chat";
 
-// ── DOM elements ──
-const chatArea     = document.getElementById("chatArea");
-const chatInput    = document.getElementById("chatInput");
-const sendBtn      = document.getElementById("sendBtn");
-const voiceBtn     = document.getElementById("voiceBtn");
-const voiceOverlay = document.getElementById("voiceOverlay");
-const cancelVoice  = document.getElementById("cancelVoice");
-
-// ── Conversation history ──
+// ─── STATE ────────────────────────────────────────────────────────────────────
 let conversationHistory = [];
+let isRecording = false;
+let recognition = null;
 
-// ============================================================
-//  1.  FILL INPUT FROM CHIP
-// ============================================================
+// ─── TODAY DETECTION ──────────────────────────────────────────────────────────
+const TODAY_NAME = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()];
+const TODAY_VARIANTS = {
+  Monday:    ["mon", "monday"],
+  Tuesday:   ["tue", "tuesday"],
+  Wednesday: ["wed", "wednesday"],
+  Thursday:  ["thu", "thursday"],
+  Friday:    ["fri", "friday"],
+  Saturday:  ["sat", "saturday"],
+  Sunday:    ["sun", "sunday"],
+};
 
-function fillInput(text) {
-  chatInput.value = text;
-  chatInput.focus();
+function isDoctorAvailableToday(opd_days) {
+  if (!opd_days) return false;
+  const lower = opd_days.toLowerCase();
+  return (TODAY_VARIANTS[TODAY_NAME] || []).some(v => lower.includes(v));
 }
 
-// ============================================================
-//  2.  SEND MESSAGE
-// ============================================================
-
-async function sendMessage() {
-  const text = chatInput.value.trim();
+// ─── SEND MESSAGE ─────────────────────────────────────────────────────────────
+async function sendMessage(messageText) {
+  const input = document.getElementById("userInput");
+  const text  = messageText || input.value.trim();
   if (!text) return;
 
+  input.value = "";
   appendMessage("user", text);
-  chatInput.value = "";
-
   conversationHistory.push({ role: "user", content: text });
-  showTyping(true);
-  sendBtn.disabled = true;
+
+  const typingEl = showTypingIndicator();
 
   try {
-    const response = await fetch(BACKEND_URL, {
+    const res = await fetch(BACKEND_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: text,
-        history: conversationHistory
-      })
+      body: JSON.stringify({ message: text, history: conversationHistory.slice(-10) }),
     });
 
-    if (!response.ok) throw new Error(`Server error: ${response.status}`);
+    const data = await res.json();
+    removeTypingIndicator(typingEl);
 
-    const data = await response.json();
-    const reply = data.reply || "Sorry, I couldn't understand that.";
+    // Emergency banner
+    if (data.is_emergency) appendEmergencyAlert();
 
-    conversationHistory.push({ role: "assistant", content: reply });
+    // Bot reply bubble
+    const msgWrapper = appendMessage("bot", data.reply);
 
-    showTyping(false);
-    appendMessage("bot", reply);
-    speakText(reply);
+    // ── Doctor name search result ─────────────────────────────────────────────
+    if (data.doctor_query && data.doctor_results && data.doctor_results.length > 0) {
+      if (data.ambiguous) {
+        renderAmbiguousResults(data.doctor_query, data.doctor_results, msgWrapper);
+      } else {
+        renderNameSearchResults(data.doctor_query, data.doctor_results, msgWrapper);
+      }
+    }
+
+    // ── Symptom-based department doctors ─────────────────────────────────────
+    if (!data.doctor_query && data.department && data.doctors && data.doctors.length > 0) {
+      renderDeptDoctors(data.department, data.doctors, msgWrapper);
+    }
+
+    conversationHistory.push({ role: "assistant", content: data.reply });
+
+    if (document.getElementById("voiceToggle")?.checked) speakText(data.reply);
 
   } catch (err) {
-    showTyping(false);
-    const errMsg = err.message.includes("Failed to fetch")
-      ? "⚠️ Cannot reach the server. Make sure your backend is running."
-      : `⚠️ Error: ${err.message}`;
-    appendMessage("bot", errMsg, true);
+    removeTypingIndicator(typingEl);
+    appendMessage("bot", "माफ करें, कोई error आई। थोड़ी देर बाद try करें।");
+    console.error(err);
   }
-
-  sendBtn.disabled = false;
-  chatInput.focus();
 }
 
-// ============================================================
-//  3.  APPEND MESSAGE BUBBLE
-// ============================================================
+// ─── RENDER: SPECIFIC DOCTOR NAME SEARCH ──────────────────────────────────────
+function renderNameSearchResults(query, results, containerEl) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "doctor-cards-wrapper";
 
-function appendMessage(role, text, isHtml = false) {
-  if (role === "user") {
-    const row = document.createElement("div");
-    row.classList.add("user-row");
-    const bubble = document.createElement("div");
-    bubble.classList.add("user-bubble");
-    bubble.innerHTML = isHtml ? text : formatText(text);
-    row.appendChild(bubble);
-    chatArea.appendChild(row);
-  } else {
-    const row = document.createElement("div");
-    row.classList.add("bot-row");
-    const avatar = document.createElement("div");
-    avatar.classList.add("avatar-sm");
-    avatar.textContent = "🩺";
-    const bubble = document.createElement("div");
-    bubble.classList.add("bot-bubble");
-    bubble.innerHTML = isHtml ? text : formatText(text);
-    row.appendChild(avatar);
-    row.appendChild(bubble);
-    chatArea.appendChild(row);
-  }
+  const todayCount = results.filter(r => isDoctorAvailableToday(r.doctor.opd_days)).length;
 
-  chatArea.scrollTop = chatArea.scrollHeight;
+  wrapper.innerHTML = `
+    <div class="doctor-cards-header">
+      <span class="dch-icon">🔍</span>
+      <span class="dch-title">Results for <strong>"${query}"</strong></span>
+      <span class="dch-badges">
+        <span class="badge-total">${results.length} found</span>
+        ${todayCount > 0 ? `<span class="badge-today">🟢 ${todayCount} today</span>` : ""}
+      </span>
+    </div>
+    <div class="doctor-cards-scroll">
+      ${[...results]
+          .sort((a,b) => isDoctorAvailableToday(b.doctor.opd_days) - isDoctorAvailableToday(a.doctor.opd_days))
+          .map(r => buildCard(r.doctor, r.dept)).join("")}
+    </div>
+  `;
+
+  containerEl.appendChild(wrapper);
+  requestAnimationFrame(() => requestAnimationFrame(() => wrapper.classList.add("visible")));
 }
 
-// ── Basic text formatter ──
-function formatText(text) {
+// ─── RENDER: AMBIGUOUS DOCTOR (SAME NAME, DIFFERENT DEPTS) ───────────────────
+function renderAmbiguousResults(query, results, containerEl) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "doctor-cards-wrapper";
+
+  wrapper.innerHTML = `
+    <div class="doctor-cards-header ambiguous-header">
+      <span class="dch-icon">⚠️</span>
+      <span class="dch-title">Multiple doctors found for <strong>"${query}"</strong> — please confirm department:</span>
+    </div>
+    <div class="disambig-list">
+      ${results.map((r, i) => `
+        <button class="disambig-btn" onclick="resolveDoctor(${i}, '${encodeURIComponent(JSON.stringify(results))}')">
+          <span class="disambig-dept">${r.dept}</span>
+          <span class="disambig-name">${r.doctor.name}</span>
+          <span class="disambig-days">${r.doctor.opd_days || "Days TBC"}</span>
+        </button>
+      `).join("")}
+    </div>
+  `;
+
+  containerEl.appendChild(wrapper);
+  requestAnimationFrame(() => requestAnimationFrame(() => wrapper.classList.add("visible")));
+}
+
+// Called when user taps a disambiguation option
+function resolveDoctor(index, encodedResults) {
+  const results = JSON.parse(decodeURIComponent(encodedResults));
+  const chosen  = results[index];
+  const msg     = `${chosen.doctor.name} from ${chosen.dept}`;
+  sendMessage(`${chosen.doctor.name}, ${chosen.dept}`);
+}
+
+// ─── RENDER: DEPARTMENT DOCTORS (SYMPTOM ROUTING) ────────────────────────────
+function renderDeptDoctors(department, doctors, containerEl) {
+  const todayDocs  = doctors.filter(d => isDoctorAvailableToday(d.opd_days));
+  const otherDocs  = doctors.filter(d => !isDoctorAvailableToday(d.opd_days));
+  const sorted     = [...todayDocs, ...otherDocs];
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "doctor-cards-wrapper";
+
+  wrapper.innerHTML = `
+    <div class="doctor-cards-header">
+      <span class="dch-icon">🩺</span>
+      <span class="dch-title"><strong>${department}</strong></span>
+      <span class="dch-badges">
+        <span class="badge-total">${doctors.length} doctors</span>
+        ${todayDocs.length > 0 ? `<span class="badge-today">🟢 ${todayDocs.length} today (${TODAY_NAME})</span>` : ""}
+      </span>
+    </div>
+    <div class="doctor-cards-scroll">
+      ${sorted.map(doc => buildCard(doc, department)).join("")}
+    </div>
+  `;
+
+  containerEl.appendChild(wrapper);
+  requestAnimationFrame(() => requestAnimationFrame(() => wrapper.classList.add("visible")));
+}
+
+// ─── BUILD SINGLE DOCTOR CARD ────────────────────────────────────────────────
+function buildCard(doc, dept) {
+  const isToday = isDoctorAvailableToday(doc.opd_days);
+
+  const initials = doc.name
+    .replace(/^(Dr\.|Prof\.)\s*/i, "")
+    .split(" ").filter(Boolean).slice(0, 2)
+    .map(w => w[0] || "").join("").toUpperCase() || "DR";
+
+  const conditions = doc.conditions
+    ? doc.conditions.split(",").slice(0, 4)
+        .map(c => `<span class="cond-chip">${c.trim()}</span>`).join("")
+    : "";
+
+  const subSpec   = doc.sub_specialty ? `<span class="tag tag-blue">${doc.sub_specialty}</span>` : "";
+  const preferred = doc.preferred_for  ? `<span class="tag tag-green">${doc.preferred_for}</span>` : "";
+  // Show center only if it's a named sub-centre (not empty)
+  const centerLine = doc.center
+    ? `<div class="cd-row"><span>🏥</span><span>${doc.center}</span></div>` : "";
+  const locLine    = doc.location ? `<div class="cd-row"><span>📍</span><span>${doc.location}</span></div>` : "";
+  const roomLine   = doc.room     ? `<div class="cd-row"><span>🚪</span><span>${doc.room}</span></div>` : "";
+  const notesLine  = doc.notes    ? `<div class="cd-row cd-notes"><span>📝</span><span>${doc.notes}</span></div>` : "";
+  const deptTag    = dept         ? `<div class="card-dept-label">${dept}</div>` : "";
+
+  return `
+    <div class="doctor-card ${isToday ? "card-today" : ""}">
+      ${isToday ? '<div class="today-ribbon">Available Today</div>' : ""}
+      <div class="card-top">
+        <div class="doc-avatar ${isToday ? "avatar-today" : ""}">${initials}</div>
+        <div class="doc-meta">
+          <div class="doc-name">${doc.name}</div>
+          <div class="doc-desig">${doc.designation}</div>
+          <div class="doc-unit">${doc.unit}</div>
+          ${deptTag}
+        </div>
+      </div>
+      <div class="card-schedule">
+        <div class="cd-row"><span>📅</span><span>${doc.opd_days || "—"}</span></div>
+        <div class="cd-row"><span>🕐</span><span>${doc.opd_timing || "—"}</span></div>
+        ${roomLine}${locLine}${centerLine}${notesLine}
+      </div>
+      ${subSpec || preferred ? `<div class="card-tags">${subSpec}${preferred}</div>` : ""}
+      ${conditions ? `<div class="card-conditions">${conditions}</div>` : ""}
+    </div>
+  `;
+}
+
+// ─── EMERGENCY ALERT ─────────────────────────────────────────────────────────
+function appendEmergencyAlert() {
+  const chat = document.getElementById("chatContainer");
+  const el = document.createElement("div");
+  el.className = "emergency-alert";
+  el.innerHTML = `
+    <div class="emergency-icon">🚨</div>
+    <div>
+      <strong>EMERGENCY — तुरंत जाएं!</strong><br>
+      Casualty / Emergency Block, New Delhi<br>
+      <small>24×7 उपलब्ध | Always open</small>
+    </div>
+  `;
+  chat.appendChild(el);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+// ─── CHAT HELPERS ─────────────────────────────────────────────────────────────
+function appendMessage(role, text) {
+  const chat = document.getElementById("chatContainer");
+  const wrapper = document.createElement("div");
+  wrapper.className = `msg-wrapper ${role}`;
+  const bubble = document.createElement("div");
+  bubble.className = `message ${role}`;
+  bubble.innerHTML = formatMessage(text);
+  wrapper.appendChild(bubble);
+  chat.appendChild(wrapper);
+  chat.scrollTop = chat.scrollHeight;
+  return wrapper;
+}
+
+function formatMessage(text) {
   return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
     .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.*?)\*/g, "<em>$1</em>")
     .replace(/\n/g, "<br>");
 }
 
-// ============================================================
-//  4.  TYPING INDICATOR
-// ============================================================
-
-function showTyping(visible) {
-  const existing = document.getElementById("typingIndicator");
-  if (existing) existing.remove();
-
-  if (visible) {
-    const row = document.createElement("div");
-    row.classList.add("bot-row");
-    row.id = "typingIndicator";
-    const avatar = document.createElement("div");
-    avatar.classList.add("avatar-sm");
-    avatar.textContent = "🩺";
-    const bubble = document.createElement("div");
-    bubble.classList.add("bot-bubble");
-    bubble.innerHTML = "<em style='color:#aaa;font-size:12px'>सोच रहा हूँ… · Thinking…</em>";
-    row.appendChild(avatar);
-    row.appendChild(bubble);
-    chatArea.appendChild(row);
-    chatArea.scrollTop = chatArea.scrollHeight;
-  }
+function showTypingIndicator() {
+  const chat = document.getElementById("chatContainer");
+  const el = document.createElement("div");
+  el.className = "msg-wrapper bot typing-wrap";
+  el.innerHTML = `
+    <div class="message bot typing-indicator">
+      <span>सोच रही हूँ</span>
+      <span class="dots"><span>.</span><span>.</span><span>.</span></span>
+    </div>`;
+  chat.appendChild(el);
+  chat.scrollTop = chat.scrollHeight;
+  return el;
 }
 
-// ============================================================
-//  5.  VOICE INPUT  (Web Speech API)
-// ============================================================
+function removeTypingIndicator(el) { el?.remove(); }
 
-let recognition = null;
-let isRecording = false;
-
-function setupVoiceInput() {
-  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-
-  if (!SpeechRecognition) {
-    voiceBtn.style.opacity = "0.4";
-    voiceBtn.disabled = true;
+// ─── VOICE INPUT ─────────────────────────────────────────────────────────────
+function toggleVoice() {
+  if (!("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
+    alert("Voice input not supported. Please use Chrome.");
     return;
   }
+  if (isRecording) { recognition?.stop(); return; }
 
-  recognition = new SpeechRecognition();
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SR();
   recognition.lang = "hi-IN";
   recognition.interimResults = false;
-  recognition.maxAlternatives = 1;
 
-  recognition.onresult = (event) => {
-    const transcript = event.results[0][0].transcript;
-    chatInput.value = transcript;
-    stopRecording();
-    sendMessage();
+  recognition.onstart = () => {
+    isRecording = true;
+    document.getElementById("micBtn")?.classList.add("recording");
+    window.speechSynthesis?.cancel();
   };
-
-  recognition.onerror = (event) => {
-    console.error("Speech error:", event.error);
-    stopRecording();
-    if (event.error === "not-allowed") {
-      appendMessage("bot", "⚠️ Microphone access denied. Please allow microphone in browser settings.");
-    }
+  recognition.onresult = (e) => {
+    const t = e.results[0][0].transcript;
+    document.getElementById("userInput").value = t;
+    sendMessage(t);
   };
-
-  recognition.onend = () => stopRecording();
-}
-
-function startRecording() {
-  if (!recognition) return;
-  // Stop Sahayak voice immediately when mic is tapped
-  window.speechSynthesis.cancel();
-  isRecording = true;
-  voiceOverlay.classList.add("active");
+  recognition.onend = () => {
+    isRecording = false;
+    document.getElementById("micBtn")?.classList.remove("recording");
+  };
+  recognition.onerror = (e) => {
+    isRecording = false;
+    document.getElementById("micBtn")?.classList.remove("recording");
+    console.error("Speech error:", e.error);
+  };
   recognition.start();
 }
 
-function stopRecording() {
-  if (!recognition) return;
-  isRecording = false;
-  voiceOverlay.classList.remove("active");
-  try { recognition.stop(); } catch (_) {}
-}
-
-voiceBtn.addEventListener("click", () => {
-  if (isRecording) stopRecording();
-  else startRecording();
-});
-
-cancelVoice.addEventListener("click", () => stopRecording());
-
-// ============================================================
-//  6.  VOICE OUTPUT
-// ============================================================
-
+// ─── VOICE OUTPUT ─────────────────────────────────────────────────────────────
 function speakText(text) {
   if (!window.speechSynthesis) return;
-  const clean = text.replace(/<[^>]+>/g, "");
-  if (!clean.trim()) return;
-
   window.speechSynthesis.cancel();
+  const plain = text.replace(/[*_`#]/g, "").replace(/<[^>]+>/g, "");
+  const utt   = new SpeechSynthesisUtterance(plain);
+  utt.lang    = "hi-IN";
 
-  const trySpeak = () => {
-    const voices = window.speechSynthesis.getVoices();
-    const preferred =
-      voices.find(v => v.name === "Google हिन्दी") ||
-      voices.find(v => v.lang === "hi-IN")          ||
-      voices.find(v => v.lang === "en-IN")          ||
-      voices[0];
+  const voices    = window.speechSynthesis.getVoices();
+  // Prefer a female Hindi voice
+  const femaleHindi = voices.find(v =>
+    v.lang === "hi-IN" && /female|woman|girl/i.test(v.name)
+  ) || voices.find(v =>
+    v.lang === "hi-IN" && /google/i.test(v.name)
+  ) || voices.find(v => v.lang === "hi-IN");
 
-    const utterance = new SpeechSynthesisUtterance(clean);
-    utterance.voice  = preferred;
-    utterance.lang   = "hi-IN";
-    utterance.rate   = 0.85;
-    utterance.pitch  = 1.0;
-    utterance.volume = 1.0;
+  if (femaleHindi) utt.voice = femaleHindi;
+  utt.pitch = 1.15;   // slightly higher pitch → more feminine
+  utt.rate  = 0.95;
 
-    window.speechSynthesis.speak(utterance);
-  };
-
-  if (window.speechSynthesis.getVoices().length === 0) {
-    window.speechSynthesis.addEventListener("voiceschanged", trySpeak, { once: true });
-  } else {
-    trySpeak();
-  }
+  window.speechSynthesis.speak(utt);
 }
 
-// ============================================================
-//  7.  SEND ON ENTER KEY
-// ============================================================
+// ─── QUICK CHIPS ─────────────────────────────────────────────────────────────
+function sendQuickChip(text) { sendMessage(text); }
 
-chatInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
+// ─── INIT ─────────────────────────────────────────────────────────────────────
+document.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("sendBtn")?.addEventListener("click", () => sendMessage());
+  document.getElementById("userInput")?.addEventListener("keydown", e => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+  document.getElementById("micBtn")?.addEventListener("click", toggleVoice);
+  window.speechSynthesis?.addEventListener("voiceschanged", () => window.speechSynthesis.getVoices());
 });
-
-sendBtn.addEventListener("click", sendMessage);
-
-// ============================================================
-//  8.  INIT
-// ============================================================
-
-setupVoiceInput();
-chatInput.focus();
