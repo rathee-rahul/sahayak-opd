@@ -1,11 +1,11 @@
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const BACKEND_URL = "https://sahayak-opd.onrender.com/chat";
-
+ 
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let conversationHistory = [];
 let isRecording = false;
 let recognition = null;
-
+ 
 // ─── TODAY DETECTION ──────────────────────────────────────────────────────────
 const TODAY_NAME = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()];
 const TODAY_VARIANTS = {
@@ -17,39 +17,39 @@ const TODAY_VARIANTS = {
   Saturday:  ["sat", "saturday"],
   Sunday:    ["sun", "sunday"],
 };
-
+ 
 function isDoctorAvailableToday(opd_days) {
   if (!opd_days) return false;
   const lower = opd_days.toLowerCase();
   return (TODAY_VARIANTS[TODAY_NAME] || []).some(v => lower.includes(v));
 }
-
+ 
 // ─── SEND MESSAGE ─────────────────────────────────────────────────────────────
 async function sendMessage(messageText) {
   const input = document.getElementById("chatInput");
   const text  = messageText || input.value.trim();
   if (!text) return;
-
+ 
   input.value = "";
   appendMessage("user", text);
   conversationHistory.push({ role: "user", content: text });
-
+ 
   const typingEl = showTypingIndicator();
-
+ 
   try {
     const res = await fetch(BACKEND_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: text, history: conversationHistory.slice(-10) }),
     });
-
+ 
     const data = await res.json();
     removeTypingIndicator(typingEl);
-
+ 
     if (data.is_emergency) appendEmergencyAlert();
-
+ 
     const msgWrapper = appendMessage("bot", data.reply);
-
+ 
     if (data.doctor_query && data.doctor_results && data.doctor_results.length > 0) {
       if (data.ambiguous) {
         renderAmbiguousResults(data.doctor_query, data.doctor_results, msgWrapper);
@@ -57,28 +57,29 @@ async function sendMessage(messageText) {
         renderNameSearchResults(data.doctor_query, data.doctor_results, msgWrapper);
       }
     }
-
+ 
     if (!data.doctor_query && data.department && data.doctors && data.doctors.length > 0) {
-      renderDeptDoctors(data.department, data.doctors, msgWrapper);
+      // ── KEY FIX: pass sub_specialty so header shows context ──
+      renderDeptDoctors(data.department, data.doctors, msgWrapper, data.sub_specialty);
     }
-
+ 
     conversationHistory.push({ role: "assistant", content: data.reply });
-
+ 
     speakText(data.reply);
-
+ 
   } catch (err) {
     removeTypingIndicator(typingEl);
     appendMessage("bot", "माफ करें, कोई error आई। थोड़ी देर बाद try करें।");
     console.error(err);
   }
 }
-
+ 
 // ─── FILL INPUT (for quick chips) ─────────────────────────────────────────────
 function fillInput(text) {
   const input = document.getElementById("chatInput");
   if (input) { input.value = text; input.focus(); }
 }
-
+ 
 // ─── RENDER: SPECIFIC DOCTOR NAME SEARCH ──────────────────────────────────────
 function renderNameSearchResults(query, results, containerEl) {
   const wrapper = document.createElement("div");
@@ -102,7 +103,7 @@ function renderNameSearchResults(query, results, containerEl) {
   containerEl.appendChild(wrapper);
   requestAnimationFrame(() => requestAnimationFrame(() => wrapper.classList.add("visible")));
 }
-
+ 
 // ─── RENDER: AMBIGUOUS DOCTOR ────────────────────────────────────────────────
 function renderAmbiguousResults(query, results, containerEl) {
   const wrapper = document.createElement("div");
@@ -125,20 +126,27 @@ function renderAmbiguousResults(query, results, containerEl) {
   containerEl.appendChild(wrapper);
   requestAnimationFrame(() => requestAnimationFrame(() => wrapper.classList.add("visible")));
 }
-
+ 
 function resolveDoctor(index, encodedResults) {
   const results = JSON.parse(decodeURIComponent(encodedResults));
   const chosen  = results[index];
   sendMessage(`${chosen.doctor.name}, ${chosen.dept}`);
 }
-
+ 
 // ─── RENDER: DEPARTMENT DOCTORS ──────────────────────────────────────────────
-function renderDeptDoctors(department, doctors, containerEl) {
+// ── KEY FIX: accepts optional sub_specialty to show filtered context in header ──
+function renderDeptDoctors(department, doctors, containerEl, sub_specialty) {
   const todayDocs = doctors.filter(d => isDoctorAvailableToday(d.opd_days));
   const otherDocs = doctors.filter(d => !isDoctorAvailableToday(d.opd_days));
   const sorted    = [...todayDocs, ...otherDocs];
   const wrapper   = document.createElement("div");
   wrapper.className = "doctor-cards-wrapper";
+
+  // If sub_specialty filtered results, show a subtitle line
+  const subSpecLine = sub_specialty
+    ? `<div class="dch-subspecialty">🔎 Filtered for: <strong>${sub_specialty}</strong></div>`
+    : "";
+
   wrapper.innerHTML = `
     <div class="doctor-cards-header">
       <span class="dch-icon">🩺</span>
@@ -148,6 +156,7 @@ function renderDeptDoctors(department, doctors, containerEl) {
         ${todayDocs.length > 0 ? `<span class="badge-today">🟢 ${todayDocs.length} today (${TODAY_NAME})</span>` : ""}
       </span>
     </div>
+    ${subSpecLine}
     <div class="doctor-cards-scroll">
       ${sorted.map(doc => buildCard(doc, department)).join("")}
     </div>
@@ -155,7 +164,7 @@ function renderDeptDoctors(department, doctors, containerEl) {
   containerEl.appendChild(wrapper);
   requestAnimationFrame(() => requestAnimationFrame(() => wrapper.classList.add("visible")));
 }
-
+ 
 // ─── BUILD SINGLE DOCTOR CARD ────────────────────────────────────────────────
 function buildCard(doc, dept) {
   const isToday = isDoctorAvailableToday(doc.opd_days);
@@ -194,7 +203,7 @@ function buildCard(doc, dept) {
     </div>
   `;
 }
-
+ 
 // ─── EMERGENCY ALERT ─────────────────────────────────────────────────────────
 function appendEmergencyAlert() {
   const chat = document.getElementById("chatArea");
@@ -211,7 +220,7 @@ function appendEmergencyAlert() {
   chat.appendChild(el);
   chat.scrollTop = chat.scrollHeight;
 }
-
+ 
 // ─── CHAT HELPERS ─────────────────────────────────────────────────────────────
 function appendMessage(role, text) {
   const chat = document.getElementById("chatArea");
@@ -225,14 +234,14 @@ function appendMessage(role, text) {
   chat.scrollTop = chat.scrollHeight;
   return wrapper;
 }
-
+ 
 function formatMessage(text) {
   return text
     .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.*?)\*/g, "<em>$1</em>")
     .replace(/\n/g, "<br>");
 }
-
+ 
 function showTypingIndicator() {
   const chat = document.getElementById("chatArea");
   const el = document.createElement("div");
@@ -247,9 +256,9 @@ function showTypingIndicator() {
   chat.scrollTop = chat.scrollHeight;
   return el;
 }
-
+ 
 function removeTypingIndicator(el) { el?.remove(); }
-
+ 
 // ─── VOICE INPUT ─────────────────────────────────────────────────────────────
 function toggleVoice() {
   if (!("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
@@ -257,14 +266,14 @@ function toggleVoice() {
     return;
   }
   if (isRecording) { recognition?.stop(); return; }
-
+ 
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   recognition = new SR();
   recognition.lang = "hi-IN";
   recognition.interimResults = false;
-
+ 
   const overlay = document.getElementById("voiceOverlay");
-
+ 
   recognition.onstart = () => {
     isRecording = true;
     if (overlay) overlay.style.display = "flex";
@@ -290,14 +299,24 @@ function toggleVoice() {
   };
   recognition.start();
 }
-
+ 
 // ─── VOICE OUTPUT ─────────────────────────────────────────────────────────────
 async function speakText(text) {
   if (!window.speechSynthesis) return;
   window.speechSynthesis.cancel();
-  const plain = text.replace(/[*_`#]/g, "").replace(/<[^>]+>/g, "");
-  const utt   = new SpeechSynthesisUtterance(plain);
-  utt.lang    = "hi-IN";
+
+  // Clean text: remove markdown, HTML tags, emoji, and extra whitespace
+  const plain = text
+    .replace(/[*_`#]/g, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")  // strip emojis
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!plain) return;
+
+  const utt = new SpeechSynthesisUtterance(plain);
+  utt.lang  = "hi-IN";
 
   // Wait for voices to load if not ready yet
   let voices = window.speechSynthesis.getVoices();
@@ -306,26 +325,36 @@ async function speakText(text) {
     voices = window.speechSynthesis.getVoices();
   }
 
-  const femaleHindi = voices.find(v =>
-    v.lang === "hi-IN" && /female|woman|girl/i.test(v.name)
-  ) || voices.find(v =>
-    v.lang === "hi-IN" && /google/i.test(v.name)
-  ) || voices.find(v => v.lang === "hi-IN");
+  // Voice priority:
+  // 1. Google हिन्दी (best quality, available on Chrome/Android)
+  // 2. Any hi-IN female voice
+  // 3. Any hi-IN voice
+  // 4. Fallback: en-IN female (sounds more natural than robotic en-US for Hinglish)
+  const voice =
+    voices.find(v => v.lang === "hi-IN" && /google/i.test(v.name)) ||
+    voices.find(v => v.lang === "hi-IN" && /female|woman/i.test(v.name)) ||
+    voices.find(v => v.lang === "hi-IN") ||
+    voices.find(v => v.lang === "en-IN" && /female|woman/i.test(v.name)) ||
+    voices.find(v => v.lang === "en-IN");
 
-  if (femaleHindi) utt.voice = femaleHindi;
-  utt.pitch = 1.15;
-  utt.rate  = 0.95;
+  if (voice) utt.voice = voice;
+
+  // Confident, clear, professional tone:
+  // pitch 1.0 = neutral (not high/childlike), rate 0.88 = slightly slower = authoritative
+  utt.pitch  = 1.0;   // was 1.15 — lower = more confident, less chirpy
+  utt.rate   = 0.88;  // was 0.95 — slower = clearer, more professional
+  utt.volume = 1.0;   // full volume
 
   window.speechSynthesis.speak(utt);
 }
-
+ 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
   // Preload voices immediately so they're ready when needed
   window.speechSynthesis?.getVoices();
   window.speechSynthesis?.addEventListener("voiceschanged", () => window.speechSynthesis.getVoices());
   setTimeout(() => window.speechSynthesis?.getVoices(), 1000);
-
+ 
   document.getElementById("sendBtn")?.addEventListener("click", () => sendMessage());
   document.getElementById("chatInput")?.addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
