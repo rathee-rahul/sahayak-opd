@@ -58,8 +58,10 @@ async function sendMessage(messageText) {
       }
     }
  
-    if (!data.doctor_query && data.department && data.doctors && data.doctors.length > 0) {
-      // ── KEY FIX: pass sub_specialty so header shows context ──
+    // Cross-department condition matches (e.g. hyperactivity found in Paediatrics + Psychiatry)
+    if (!data.doctor_query && data.condition_matches && data.condition_matches.length > 0) {
+      renderConditionMatches(data.condition_matches, data.sub_specialty, msgWrapper);
+    } else if (!data.doctor_query && data.department && data.doctors && data.doctors.length > 0) {
       renderDeptDoctors(data.department, data.doctors, msgWrapper, data.sub_specialty);
     }
  
@@ -133,6 +135,53 @@ function resolveDoctor(index, encodedResults) {
   sendMessage(`${chosen.doctor.name}, ${chosen.dept}`);
 }
  
+// ─── RENDER: CROSS-DEPARTMENT CONDITION MATCHES ──────────────────────────────
+function renderConditionMatches(matches, sub_specialty, containerEl) {
+  // Group matches by department
+  const byDept = {};
+  matches.forEach(m => {
+    if (!byDept[m.dept]) byDept[m.dept] = [];
+    byDept[m.dept].push(m.doctor);
+  });
+
+  const deptNames = Object.keys(byDept);
+  const totalDocs = matches.length;
+  const todayCount = matches.filter(m => isDoctorAvailableToday(m.doctor.opd_days)).length;
+
+  const wrapper = document.createElement("div");
+  wrapper.className = "doctor-cards-wrapper";
+
+  const subSpecLine = sub_specialty
+    ? `<div class="dch-subspecialty">🔎 Matching doctors for: <strong>${sub_specialty}</strong></div>`
+    : "";
+
+  // Build cards grouped by department
+  let cardsHtml = "";
+  deptNames.forEach(dept => {
+    const docs = byDept[dept];
+    const sorted = [...docs].sort((a,b) =>
+      isDoctorAvailableToday(b.opd_days) - isDoctorAvailableToday(a.opd_days)
+    );
+    cardsHtml += `<div class="dept-group-label">🏥 ${dept}</div>`;
+    cardsHtml += sorted.map(doc => buildCard(doc, dept)).join("");
+  });
+
+  wrapper.innerHTML = `
+    <div class="doctor-cards-header">
+      <span class="dch-icon">🔍</span>
+      <span class="dch-title">Matching Specialists — <strong>${deptNames.length} departments</strong></span>
+      <span class="dch-badges">
+        <span class="badge-total">${totalDocs} doctors</span>
+        ${todayCount > 0 ? `<span class="badge-today">🟢 ${todayCount} today</span>` : ""}
+      </span>
+    </div>
+    ${subSpecLine}
+    <div class="doctor-cards-scroll">${cardsHtml}</div>
+  `;
+  containerEl.appendChild(wrapper);
+  requestAnimationFrame(() => requestAnimationFrame(() => wrapper.classList.add("visible")));
+}
+
 // ─── RENDER: DEPARTMENT DOCTORS ──────────────────────────────────────────────
 // ── KEY FIX: accepts optional sub_specialty to show filtered context in header ──
 function renderDeptDoctors(department, doctors, containerEl, sub_specialty) {

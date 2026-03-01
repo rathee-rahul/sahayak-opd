@@ -14,9 +14,9 @@
     --shadow-sm:   0 1px 5px rgba(10,61,107,0.09);
     --radius:      16px;
   }
-
+ 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
+ 
   body {
     font-family: 'DM Sans', sans-serif;
     background: #dde8f5;
@@ -25,14 +25,14 @@
     align-items: center; justify-content: center;
     padding: 16px;
   }
-
+ 
   .phone-shell {
     width: 390px; height: 820px;
     background: var(--white); border-radius: 38px;
     box-shadow: 0 32px 90px rgba(10,61,107,0.24), 0 0 0 8px #ccddf0;
     overflow: hidden; display: flex; flex-direction: column; position: relative;
   }
-
+ 
   .header {
     background: linear-gradient(150deg, #07294a 0%, #0e4a90 50%, #1870c2 100%);
     padding: 16px 18px 13px;
@@ -48,12 +48,12 @@
     width: 130px; height: 130px; border-radius: 50%;
     background: radial-gradient(circle, rgba(255,255,255,0.05), transparent 70%);
   }
-
+ 
   .header-inner {
     display: flex; align-items: center; gap: 13px;
     position: relative; z-index: 1;
   }
-
+ 
   .logo-wrap {
     width: 50px; height: 50px;
     background: rgba(255,255,255,0.13);
@@ -63,7 +63,7 @@
     backdrop-filter: blur(10px); flex-shrink: 0;
   }
   .logo-wrap svg { width: 26px; height: 26px; }
-
+ 
   .header-text { flex: 1; }
   .app-name {
     font-family: 'Playfair Display', serif;
@@ -81,7 +81,7 @@
     color: rgba(255,255,255,0.5);
     letter-spacing: 0.6px; text-transform: uppercase;
   }
-
+ 
   .status-badge {
     display: flex; align-items: center; gap: 5px;
     background: rgba(255,255,255,0.1);
@@ -98,7 +98,7 @@
     0%,100% { box-shadow: 0 0 0 2px rgba(74,222,128,0.3); }
     50%      { box-shadow: 0 0 0 5px rgba(74,222,128,0.1); }
   }
-
+ 
   .aiims-strip {
     position: relative; z-index: 1; margin-top: 9px;
     background: rgba(255,255,255,0.08);
@@ -115,20 +115,20 @@
     font-size: 10px; color: rgba(255,255,255,0.5);
     text-align: right; line-height: 1.5;
   }
-
+ 
   .dev-credit {
     position: relative; z-index: 1; margin-top: 7px;
     font-size: 10px; color: rgba(255,255,255,0.32);
     letter-spacing: 0.5px; text-align: right;
   }
-
+ 
   .chat-area {
     flex: 1; overflow-y: auto; padding: 18px 14px 10px;
     display: flex; flex-direction: column; gap: 12px;
     background: var(--blue-pale);
     scrollbar-width: thin; scrollbar-color: var(--gray-300) transparent;
   }
-
+ 
   .welcome-card {
     background: var(--white); border-radius: 20px;
     border: 1px solid rgba(10,61,107,0.08);
@@ -158,7 +158,7 @@
     font-size: 12.5px; color: var(--gray-700); line-height: 1.7; margin-top: 8px;
   }
   .welcome-desc-en { font-size: 12px; color: var(--gray-500); line-height: 1.6; margin-top: 4px; }
-
+ 
   .chips-wrap {
     display: flex; flex-wrap: wrap; gap: 7px;
     animation: fadeUp 0.5s ease both; animation-delay: 0.1s;
@@ -179,7 +179,7 @@
   .chip:hover { background: var(--blue-light); border-color: var(--accent); color: var(--blue-mid); transform: translateY(-1px); }
   .chip-hi { font-family: 'Noto Sans Devanagari', sans-serif; font-size: 13px; }
   .chip-en { font-size: 11px; color: var(--gray-500); }
-
+ 
   .bot-row {
     display: flex; gap: 9px; align-items: flex-end;
     animation: fadeUp 0.5s ease both; animation-delay: 0.2s;
@@ -202,7 +202,7 @@
     font-size: 13.5px;
   }
   .bot-bubble .en { display: block; color: var(--gray-500); font-size: 12px; }
-
+ 
   .user-row {
     display: flex; justify-content: flex-end;
     animation: fadeUp 0.5s ease both;
@@ -214,7 +214,7 @@
     font-size: 13px; color: #fff; line-height: 1.6;
     box-shadow: 0 4px 14px rgba(21,101,192,0.35);
   }
-
+ 
   .dept-card {
     background: var(--white); border: 1px solid rgba(10,61,107,0.07);
     border-radius: var(--radius); border-bottom-left-radius: 4px;
@@ -232,7 +232,7 @@
     border-radius: 10px; padding: 7px 12px; margin-top: 4px;
     font-size: 12.5px; font-weight: 600; color: var(--blue-mid);
   }
-
+ 
   .voice-overlay {
     display: none; position: absolute; inset: 0;
     background: rgba(6,28,60,0.96); backdrop-filter: blur(12px);
@@ -281,7 +281,7 @@
   }
   .voice-cancel-btn .cancel-hi { font-family:'Noto Sans Devanagari',sans-serif; }
   .voice-cancel-btn:hover { background:rgba(255,255,255,0.13); color:#fff; border-color:rgba(255,255,255,0.45); }
-
+ 
   .input-bar { padding:10px 14px 10px; background:var(--white); border-top:1px solid var(--gray-100); flex-shrink:0; }
   .input-row {
     display:flex; align-items:center; gap:8px; background:var(--gray-50);
@@ -301,7 +301,7 @@
    SAHAYAK — DOCTOR CARDS CSS  (Phase 2)
    Paste this entire block at the bottom of style.css
    ═══════════════════════════════════════════════════════════ */
-
+ 
 /* ── Wrapper animates in below bot message ── */
 .doctor-cards-wrapper {
   margin-top: 10px;
@@ -313,7 +313,7 @@
   opacity: 1;
   transform: translateY(0);
 }
-
+ 
 /* ── Header row ── */
 .doctor-cards-header {
   display: flex;
@@ -327,7 +327,7 @@
 .dch-icon { font-size: 18px; }
 .dch-title { font-size: 13.5px; color: #1a202c; }
 .dch-badges { display: flex; gap: 6px; flex-wrap: wrap; margin-left: auto; }
-
+ 
 .badge-total {
   background: #e8f0fe;
   color: #1a73e8;
@@ -344,7 +344,7 @@
   font-size: 11px;
   font-weight: 600;
 }
-
+ 
 /* ── Scrollable row of cards ── */
 .doctor-cards-scroll {
   display: flex;
@@ -357,7 +357,7 @@
 .doctor-cards-scroll::-webkit-scrollbar { height: 4px; }
 .doctor-cards-scroll::-webkit-scrollbar-track { background: #f1f3f5; border-radius: 4px; }
 .doctor-cards-scroll::-webkit-scrollbar-thumb { background: #b0c4de; border-radius: 4px; }
-
+ 
 /* ── Individual card ── */
 .doctor-card {
   flex: 0 0 255px;
@@ -375,7 +375,7 @@
   box-shadow: 0 6px 18px rgba(26,115,232,0.14);
   transform: translateY(-2px);
 }
-
+ 
 /* ── Today highlight ── */
 .card-today {
   border-color: #22c55e;
@@ -392,7 +392,7 @@
   transform: rotate(35deg);
   letter-spacing: 0.5px;
 }
-
+ 
 /* ── Card top: avatar + name ── */
 .card-top {
   display: flex;
@@ -428,7 +428,7 @@
 }
 .doc-desig { font-size: 11.5px; color: #5a72a0; margin-top: 2px; }
 .doc-unit  { font-size: 10.5px; color: #94a3b8; margin-top: 1px; font-style: italic; }
-
+ 
 /* ── Schedule block ── */
 .card-schedule {
   background: #f7f9ff;
@@ -449,7 +449,7 @@
 }
 .cd-row span:first-child { flex-shrink: 0; width: 16px; text-align: center; }
 .cd-notes { color: #6b7280; font-style: italic; }
-
+ 
 /* ── Tags ── */
 .card-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 7px; }
 .tag {
@@ -460,7 +460,7 @@
 }
 .tag-blue  { background: #dbeafe; color: #1d4ed8; }
 .tag-green { background: #dcfce7; color: #166534; }
-
+ 
 /* ── Condition chips ── */
 .card-conditions { display: flex; flex-wrap: wrap; gap: 4px; }
 .cond-chip {
@@ -472,7 +472,7 @@
   border: 1px solid #e2e8f0;
   text-transform: capitalize;
 }
-
+ 
 /* ── Emergency alert block ── */
 .emergency-alert {
   display: flex;
@@ -488,23 +488,23 @@
 .emergency-icon { font-size: 28px; flex-shrink: 0; }
 .emergency-alert strong { color: #b91c1c; font-size: 14px; }
 .emergency-alert small  { color: #6b7280; font-size: 11px; }
-
+ 
 @keyframes pulse-red {
   0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
   50%       { box-shadow: 0 0 0 8px rgba(239,68,68,0.2); }
 }
-
+ 
 /* ── Mobile ── */
 @media (max-width: 480px) {
   .doctor-card { flex: 0 0 220px; padding: 12px; }
   .doc-name    { font-size: 12px; }
   .dch-badges  { margin-left: 0; }
 }
-
+ 
 /* ═══════════════════════════════════════════════════════════
    ADDITIONS for Phase 2 v2 — Doctor name search + disambiguation
    ═══════════════════════════════════════════════════════════ */
-
+ 
 /* ── Department label on card (shown in name-search mode) ── */
 .card-dept-label {
   font-size: 10px;
@@ -514,7 +514,7 @@
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
-
+ 
 /* ── Ambiguous header ── */
 .ambiguous-header {
   color: #b45309;
@@ -523,7 +523,7 @@
   color: #92400e;
   font-size: 12.5px;
 }
-
+ 
 /* ── Disambiguation buttons ── */
 .disambig-list {
   display: flex;
@@ -531,7 +531,7 @@
   gap: 8px;
   margin-top: 4px;
 }
-
+ 
 .disambig-btn {
   display: flex;
   flex-direction: column;
@@ -547,13 +547,13 @@
   font-family: inherit;
   width: 100%;
 }
-
+ 
 .disambig-btn:hover {
   background: #fef3c7;
   border-color: #f59e0b;
   transform: translateX(4px);
 }
-
+ 
 .disambig-dept {
   font-size: 11px;
   font-weight: 700;
@@ -561,20 +561,46 @@
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
-
+ 
 .disambig-name {
   font-size: 13.5px;
   font-weight: 600;
   color: #1a202c;
 }
-
+ 
 .disambig-days {
   font-size: 11px;
   color: #64748b;
 }
-
+ 
 /* ── Typing indicator (female text) ── */
 .typing-indicator span:first-child {
   color: #6b7280;
   font-size: 13px;
 }
+ 
+
+
+
+/* ── DUAL SEARCH: dept group label ─────────────────────────────── */
+.dept-group-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #4a5568;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 8px 4px 4px;
+  border-top: 1px solid #e2e8f0;
+  margin-top: 8px;
+}
+.dept-group-label:first-child { border-top: none; margin-top: 0; }
+
+/* ── DUAL SEARCH: sub-specialty filter line ─────────────────────── */
+.dch-subspecialty {
+  font-size: 12px;
+  color: #6b7280;
+  padding: 2px 4px 8px;
+  border-bottom: 1px dashed #e2e8f0;
+  margin-bottom: 6px;
+}
+.dch-subspecialty strong { color: #1a73e8; }
