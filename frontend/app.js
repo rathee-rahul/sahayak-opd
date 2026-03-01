@@ -26,7 +26,7 @@ function isDoctorAvailableToday(opd_days) {
 
 // ─── SEND MESSAGE ─────────────────────────────────────────────────────────────
 async function sendMessage(messageText) {
-  const input = document.getElementById("userInput");
+  const input = document.getElementById("chatInput");         // ✅ FIXED
   const text  = messageText || input.value.trim();
   if (!text) return;
 
@@ -75,6 +75,12 @@ async function sendMessage(messageText) {
     appendMessage("bot", "माफ करें, कोई error आई। थोड़ी देर बाद try करें।");
     console.error(err);
   }
+}
+
+// ─── FILL INPUT (for quick chips) ─────────────────────────────────────────────
+function fillInput(text) {
+  const input = document.getElementById("chatInput");         // ✅ FIXED
+  if (input) { input.value = text; input.focus(); }
 }
 
 // ─── RENDER: SPECIFIC DOCTOR NAME SEARCH ──────────────────────────────────────
@@ -133,7 +139,6 @@ function renderAmbiguousResults(query, results, containerEl) {
 function resolveDoctor(index, encodedResults) {
   const results = JSON.parse(decodeURIComponent(encodedResults));
   const chosen  = results[index];
-  const msg     = `${chosen.doctor.name} from ${chosen.dept}`;
   sendMessage(`${chosen.doctor.name}, ${chosen.dept}`);
 }
 
@@ -180,7 +185,6 @@ function buildCard(doc, dept) {
 
   const subSpec   = doc.sub_specialty ? `<span class="tag tag-blue">${doc.sub_specialty}</span>` : "";
   const preferred = doc.preferred_for  ? `<span class="tag tag-green">${doc.preferred_for}</span>` : "";
-  // Show center only if it's a named sub-centre (not empty)
   const centerLine = doc.center
     ? `<div class="cd-row"><span>🏥</span><span>${doc.center}</span></div>` : "";
   const locLine    = doc.location ? `<div class="cd-row"><span>📍</span><span>${doc.location}</span></div>` : "";
@@ -213,7 +217,7 @@ function buildCard(doc, dept) {
 
 // ─── EMERGENCY ALERT ─────────────────────────────────────────────────────────
 function appendEmergencyAlert() {
-  const chat = document.getElementById("chatContainer");
+  const chat = document.getElementById("chatArea");           // ✅ FIXED
   const el = document.createElement("div");
   el.className = "emergency-alert";
   el.innerHTML = `
@@ -230,11 +234,11 @@ function appendEmergencyAlert() {
 
 // ─── CHAT HELPERS ─────────────────────────────────────────────────────────────
 function appendMessage(role, text) {
-  const chat = document.getElementById("chatContainer");
+  const chat = document.getElementById("chatArea");           // ✅ FIXED
   const wrapper = document.createElement("div");
-  wrapper.className = `msg-wrapper ${role}`;
+  wrapper.className = role === "user" ? "user-row" : "bot-row";
   const bubble = document.createElement("div");
-  bubble.className = `message ${role}`;
+  bubble.className = role === "user" ? "user-bubble" : "bot-bubble";
   bubble.innerHTML = formatMessage(text);
   wrapper.appendChild(bubble);
   chat.appendChild(wrapper);
@@ -250,11 +254,12 @@ function formatMessage(text) {
 }
 
 function showTypingIndicator() {
-  const chat = document.getElementById("chatContainer");
+  const chat = document.getElementById("chatArea");           // ✅ FIXED
   const el = document.createElement("div");
-  el.className = "msg-wrapper bot typing-wrap";
+  el.className = "bot-row typing-wrap";
   el.innerHTML = `
-    <div class="message bot typing-indicator">
+    <div class="avatar-sm">🩺</div>
+    <div class="bot-bubble typing-indicator">
       <span>सोच रही हूँ</span>
       <span class="dots"><span>.</span><span>.</span><span>.</span></span>
     </div>`;
@@ -278,23 +283,29 @@ function toggleVoice() {
   recognition.lang = "hi-IN";
   recognition.interimResults = false;
 
+  const overlay = document.getElementById("voiceOverlay");
+
   recognition.onstart = () => {
     isRecording = true;
-    document.getElementById("micBtn")?.classList.add("recording");
+    if (overlay) overlay.style.display = "flex";
+    document.getElementById("voiceBtn")?.classList.add("recording");
     window.speechSynthesis?.cancel();
   };
   recognition.onresult = (e) => {
     const t = e.results[0][0].transcript;
-    document.getElementById("userInput").value = t;
+    document.getElementById("chatInput").value = t;           // ✅ FIXED
+    if (overlay) overlay.style.display = "none";
     sendMessage(t);
   };
   recognition.onend = () => {
     isRecording = false;
-    document.getElementById("micBtn")?.classList.remove("recording");
+    if (overlay) overlay.style.display = "none";
+    document.getElementById("voiceBtn")?.classList.remove("recording");
   };
   recognition.onerror = (e) => {
     isRecording = false;
-    document.getElementById("micBtn")?.classList.remove("recording");
+    if (overlay) overlay.style.display = "none";
+    document.getElementById("voiceBtn")?.classList.remove("recording");
     console.error("Speech error:", e.error);
   };
   recognition.start();
@@ -308,8 +319,7 @@ function speakText(text) {
   const utt   = new SpeechSynthesisUtterance(plain);
   utt.lang    = "hi-IN";
 
-  const voices    = window.speechSynthesis.getVoices();
-  // Prefer a female Hindi voice
+  const voices = window.speechSynthesis.getVoices();
   const femaleHindi = voices.find(v =>
     v.lang === "hi-IN" && /female|woman|girl/i.test(v.name)
   ) || voices.find(v =>
@@ -317,21 +327,31 @@ function speakText(text) {
   ) || voices.find(v => v.lang === "hi-IN");
 
   if (femaleHindi) utt.voice = femaleHindi;
-  utt.pitch = 1.15;   // slightly higher pitch → more feminine
+  utt.pitch = 1.15;
   utt.rate  = 0.95;
 
   window.speechSynthesis.speak(utt);
 }
 
-// ─── QUICK CHIPS ─────────────────────────────────────────────────────────────
-function sendQuickChip(text) { sendMessage(text); }
-
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
+  // Send button
   document.getElementById("sendBtn")?.addEventListener("click", () => sendMessage());
-  document.getElementById("userInput")?.addEventListener("keydown", e => {
+
+  // Enter key to send
+  document.getElementById("chatInput")?.addEventListener("keydown", e => {  // ✅ FIXED
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   });
-  document.getElementById("micBtn")?.addEventListener("click", toggleVoice);
+
+  // Voice button
+  document.getElementById("voiceBtn")?.addEventListener("click", toggleVoice);  // ✅ FIXED
+
+  // Cancel voice overlay button
+  document.getElementById("cancelVoice")?.addEventListener("click", () => {
+    recognition?.stop();
+    document.getElementById("voiceOverlay").style.display = "none";
+  });
+
+  // Preload voices
   window.speechSynthesis?.addEventListener("voiceschanged", () => window.speechSynthesis.getVoices());
 });
