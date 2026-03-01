@@ -26,7 +26,7 @@ function isDoctorAvailableToday(opd_days) {
 
 // ─── SEND MESSAGE ─────────────────────────────────────────────────────────────
 async function sendMessage(messageText) {
-  const input = document.getElementById("chatInput");         // ✅ FIXED
+  const input = document.getElementById("chatInput");
   const text  = messageText || input.value.trim();
   if (!text) return;
 
@@ -46,13 +46,10 @@ async function sendMessage(messageText) {
     const data = await res.json();
     removeTypingIndicator(typingEl);
 
-    // Emergency banner
     if (data.is_emergency) appendEmergencyAlert();
 
-    // Bot reply bubble
     const msgWrapper = appendMessage("bot", data.reply);
 
-    // ── Doctor name search result ─────────────────────────────────────────────
     if (data.doctor_query && data.doctor_results && data.doctor_results.length > 0) {
       if (data.ambiguous) {
         renderAmbiguousResults(data.doctor_query, data.doctor_results, msgWrapper);
@@ -61,14 +58,13 @@ async function sendMessage(messageText) {
       }
     }
 
-    // ── Symptom-based department doctors ─────────────────────────────────────
     if (!data.doctor_query && data.department && data.doctors && data.doctors.length > 0) {
       renderDeptDoctors(data.department, data.doctors, msgWrapper);
     }
 
     conversationHistory.push({ role: "assistant", content: data.reply });
 
-    if (document.getElementById("voiceToggle")?.checked) speakText(data.reply);
+    speakText(data.reply);
 
   } catch (err) {
     removeTypingIndicator(typingEl);
@@ -79,7 +75,7 @@ async function sendMessage(messageText) {
 
 // ─── FILL INPUT (for quick chips) ─────────────────────────────────────────────
 function fillInput(text) {
-  const input = document.getElementById("chatInput");         // ✅ FIXED
+  const input = document.getElementById("chatInput");
   if (input) { input.value = text; input.focus(); }
 }
 
@@ -87,9 +83,7 @@ function fillInput(text) {
 function renderNameSearchResults(query, results, containerEl) {
   const wrapper = document.createElement("div");
   wrapper.className = "doctor-cards-wrapper";
-
   const todayCount = results.filter(r => isDoctorAvailableToday(r.doctor.opd_days)).length;
-
   wrapper.innerHTML = `
     <div class="doctor-cards-header">
       <span class="dch-icon">🔍</span>
@@ -105,16 +99,14 @@ function renderNameSearchResults(query, results, containerEl) {
           .map(r => buildCard(r.doctor, r.dept)).join("")}
     </div>
   `;
-
   containerEl.appendChild(wrapper);
   requestAnimationFrame(() => requestAnimationFrame(() => wrapper.classList.add("visible")));
 }
 
-// ─── RENDER: AMBIGUOUS DOCTOR (SAME NAME, DIFFERENT DEPTS) ───────────────────
+// ─── RENDER: AMBIGUOUS DOCTOR ────────────────────────────────────────────────
 function renderAmbiguousResults(query, results, containerEl) {
   const wrapper = document.createElement("div");
   wrapper.className = "doctor-cards-wrapper";
-
   wrapper.innerHTML = `
     <div class="doctor-cards-header ambiguous-header">
       <span class="dch-icon">⚠️</span>
@@ -130,27 +122,23 @@ function renderAmbiguousResults(query, results, containerEl) {
       `).join("")}
     </div>
   `;
-
   containerEl.appendChild(wrapper);
   requestAnimationFrame(() => requestAnimationFrame(() => wrapper.classList.add("visible")));
 }
 
-// Called when user taps a disambiguation option
 function resolveDoctor(index, encodedResults) {
   const results = JSON.parse(decodeURIComponent(encodedResults));
   const chosen  = results[index];
   sendMessage(`${chosen.doctor.name}, ${chosen.dept}`);
 }
 
-// ─── RENDER: DEPARTMENT DOCTORS (SYMPTOM ROUTING) ────────────────────────────
+// ─── RENDER: DEPARTMENT DOCTORS ──────────────────────────────────────────────
 function renderDeptDoctors(department, doctors, containerEl) {
-  const todayDocs  = doctors.filter(d => isDoctorAvailableToday(d.opd_days));
-  const otherDocs  = doctors.filter(d => !isDoctorAvailableToday(d.opd_days));
-  const sorted     = [...todayDocs, ...otherDocs];
-
-  const wrapper = document.createElement("div");
+  const todayDocs = doctors.filter(d => isDoctorAvailableToday(d.opd_days));
+  const otherDocs = doctors.filter(d => !isDoctorAvailableToday(d.opd_days));
+  const sorted    = [...todayDocs, ...otherDocs];
+  const wrapper   = document.createElement("div");
   wrapper.className = "doctor-cards-wrapper";
-
   wrapper.innerHTML = `
     <div class="doctor-cards-header">
       <span class="dch-icon">🩺</span>
@@ -164,7 +152,6 @@ function renderDeptDoctors(department, doctors, containerEl) {
       ${sorted.map(doc => buildCard(doc, department)).join("")}
     </div>
   `;
-
   containerEl.appendChild(wrapper);
   requestAnimationFrame(() => requestAnimationFrame(() => wrapper.classList.add("visible")));
 }
@@ -172,26 +159,19 @@ function renderDeptDoctors(department, doctors, containerEl) {
 // ─── BUILD SINGLE DOCTOR CARD ────────────────────────────────────────────────
 function buildCard(doc, dept) {
   const isToday = isDoctorAvailableToday(doc.opd_days);
-
   const initials = doc.name
     .replace(/^(Dr\.|Prof\.)\s*/i, "")
     .split(" ").filter(Boolean).slice(0, 2)
     .map(w => w[0] || "").join("").toUpperCase() || "DR";
-
   const conditions = doc.conditions
-    ? doc.conditions.split(",").slice(0, 4)
-        .map(c => `<span class="cond-chip">${c.trim()}</span>`).join("")
-    : "";
-
-  const subSpec   = doc.sub_specialty ? `<span class="tag tag-blue">${doc.sub_specialty}</span>` : "";
-  const preferred = doc.preferred_for  ? `<span class="tag tag-green">${doc.preferred_for}</span>` : "";
-  const centerLine = doc.center
-    ? `<div class="cd-row"><span>🏥</span><span>${doc.center}</span></div>` : "";
+    ? doc.conditions.split(",").slice(0, 4).map(c => `<span class="cond-chip">${c.trim()}</span>`).join("") : "";
+  const subSpec    = doc.sub_specialty ? `<span class="tag tag-blue">${doc.sub_specialty}</span>` : "";
+  const preferred  = doc.preferred_for ? `<span class="tag tag-green">${doc.preferred_for}</span>` : "";
+  const centerLine = doc.center   ? `<div class="cd-row"><span>🏥</span><span>${doc.center}</span></div>` : "";
   const locLine    = doc.location ? `<div class="cd-row"><span>📍</span><span>${doc.location}</span></div>` : "";
   const roomLine   = doc.room     ? `<div class="cd-row"><span>🚪</span><span>${doc.room}</span></div>` : "";
   const notesLine  = doc.notes    ? `<div class="cd-row cd-notes"><span>📝</span><span>${doc.notes}</span></div>` : "";
   const deptTag    = dept         ? `<div class="card-dept-label">${dept}</div>` : "";
-
   return `
     <div class="doctor-card ${isToday ? "card-today" : ""}">
       ${isToday ? '<div class="today-ribbon">Available Today</div>' : ""}
@@ -217,7 +197,7 @@ function buildCard(doc, dept) {
 
 // ─── EMERGENCY ALERT ─────────────────────────────────────────────────────────
 function appendEmergencyAlert() {
-  const chat = document.getElementById("chatArea");           // ✅ FIXED
+  const chat = document.getElementById("chatArea");
   const el = document.createElement("div");
   el.className = "emergency-alert";
   el.innerHTML = `
@@ -234,7 +214,7 @@ function appendEmergencyAlert() {
 
 // ─── CHAT HELPERS ─────────────────────────────────────────────────────────────
 function appendMessage(role, text) {
-  const chat = document.getElementById("chatArea");           // ✅ FIXED
+  const chat = document.getElementById("chatArea");
   const wrapper = document.createElement("div");
   wrapper.className = role === "user" ? "user-row" : "bot-row";
   const bubble = document.createElement("div");
@@ -254,7 +234,7 @@ function formatMessage(text) {
 }
 
 function showTypingIndicator() {
-  const chat = document.getElementById("chatArea");           // ✅ FIXED
+  const chat = document.getElementById("chatArea");
   const el = document.createElement("div");
   el.className = "bot-row typing-wrap";
   el.innerHTML = `
@@ -293,7 +273,7 @@ function toggleVoice() {
   };
   recognition.onresult = (e) => {
     const t = e.results[0][0].transcript;
-    document.getElementById("chatInput").value = t;           // ✅ FIXED
+    document.getElementById("chatInput").value = t;
     if (overlay) overlay.style.display = "none";
     sendMessage(t);
   };
@@ -312,14 +292,20 @@ function toggleVoice() {
 }
 
 // ─── VOICE OUTPUT ─────────────────────────────────────────────────────────────
-function speakText(text) {
+async function speakText(text) {
   if (!window.speechSynthesis) return;
   window.speechSynthesis.cancel();
   const plain = text.replace(/[*_`#]/g, "").replace(/<[^>]+>/g, "");
   const utt   = new SpeechSynthesisUtterance(plain);
   utt.lang    = "hi-IN";
 
-  const voices = window.speechSynthesis.getVoices();
+  // Wait for voices to load if not ready yet
+  let voices = window.speechSynthesis.getVoices();
+  if (!voices.length) {
+    await new Promise(r => setTimeout(r, 1000));
+    voices = window.speechSynthesis.getVoices();
+  }
+
   const femaleHindi = voices.find(v =>
     v.lang === "hi-IN" && /female|woman|girl/i.test(v.name)
   ) || voices.find(v =>
@@ -335,23 +321,18 @@ function speakText(text) {
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
-  // Send button
-  document.getElementById("sendBtn")?.addEventListener("click", () => sendMessage());
+  // Preload voices immediately so they're ready when needed
+  window.speechSynthesis?.getVoices();
+  window.speechSynthesis?.addEventListener("voiceschanged", () => window.speechSynthesis.getVoices());
+  setTimeout(() => window.speechSynthesis?.getVoices(), 1000);
 
-  // Enter key to send
-  document.getElementById("chatInput")?.addEventListener("keydown", e => {  // ✅ FIXED
+  document.getElementById("sendBtn")?.addEventListener("click", () => sendMessage());
+  document.getElementById("chatInput")?.addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   });
-
-  // Voice button
-  document.getElementById("voiceBtn")?.addEventListener("click", toggleVoice);  // ✅ FIXED
-
-  // Cancel voice overlay button
+  document.getElementById("voiceBtn")?.addEventListener("click", toggleVoice);
   document.getElementById("cancelVoice")?.addEventListener("click", () => {
     recognition?.stop();
     document.getElementById("voiceOverlay").style.display = "none";
   });
-
-  // Preload voices
-  window.speechSynthesis?.addEventListener("voiceschanged", () => window.speechSynthesis.getVoices());
 });
