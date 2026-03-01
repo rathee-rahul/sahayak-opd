@@ -122,9 +122,26 @@ async def chat(request: ChatRequest):
         is_emergency = parsed.get("is_emergency", False)
         doctor_query = parsed.get("doctor_query")
     except (json.JSONDecodeError, KeyError):
-        reply, department, sub_spec = raw, None, None
-        is_emergency, doctor_query  = False, None
- 
+        # AI returned plain text + JSON appended — try to find JSON block inside
+        json_match = re.search(r'\{[\s\S]*?"reply"[\s\S]*?\}', raw)
+        if json_match:
+            try:
+                parsed       = json.loads(json_match.group())
+                reply        = parsed.get("reply", raw)
+                department   = parsed.get("department")
+                sub_spec     = parsed.get("sub_specialty")
+                is_emergency = parsed.get("is_emergency", False)
+                doctor_query = parsed.get("doctor_query")
+            except Exception:
+                reply, department, sub_spec = raw, None, None
+                is_emergency, doctor_query  = False, None
+        else:
+            reply, department, sub_spec = raw, None, None
+            is_emergency, doctor_query  = False, None
+
+    # Safety net: strip any leaked JSON block from the reply text
+    reply = re.sub(r'\s*\{[\s\S]*?"reply"[\s\S]*?\}\s*', '', reply).strip()
+
     doctor_results = []
     ambiguous      = False
  
