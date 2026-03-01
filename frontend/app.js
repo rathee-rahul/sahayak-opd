@@ -349,18 +349,67 @@ function toggleVoice() {
   recognition.start();
 }
  
+// ─── HINDI NUMBER CONVERTER ───────────────────────────────────────────────────
+// Converts Arabic numerals (0–999) in a string to Hindi spoken words,
+// so TTS says "das saal" instead of "ten saal", "pachaas" instead of "fifty", etc.
+function convertNumbersToHindi(text) {
+  const ones = [
+    "", "ek", "do", "teen", "chaar", "paanch",
+    "chhah", "saat", "aath", "nau", "das",
+    "gyarah", "barah", "terah", "chaudah", "pandrah",
+    "solah", "satrah", "atharah", "unnis", "bees",
+    "ikkees", "baais", "teis", "chaubees", "pachchees",
+    "chhabees", "sattaees", "atthaees", "untees", "tees",
+    "ikattees", "battees", "taintees", "chauntees", "paintees",
+    "chattees", "saintees", "artees", "untaalees", "chaalees",
+    "ikataalees", "bayaalees", "taintaalees", "chauvaalees", "paintaalees",
+    "chiyaalees", "saintaalees", "artaalees", "unchaas", "pachaas",
+    "ikaavan", "baavan", "tirpan", "chauvan", "pachpan",
+    "chhappan", "sattavan", "attavan", "unsath", "saath",
+    "iksath", "baasath", "tirsath", "chavsath", "painsath",
+    "chhiyasath", "sarsath", "arsath", "unhattar", "sattar",
+    "ikhattar", "bahattar", "tihattar", "chauhattar", "pachhattar",
+    "chhihattar", "sathattar", "athhattar", "unnasi", "assi",
+    "ikyaasi", "byaasi", "tiraasi", "chauraasi", "pachaasi",
+    "chiyaasi", "sataasi", "ataasi", "navasi", "nabbe",
+    "ikyaanave", "baanave", "tiraanave", "chauraanave", "pachaanave",
+    "chhiyaanave", "sataanave", "ataanave", "ninyaanave"
+  ];
+
+  function numToHindi(n) {
+    n = parseInt(n, 10);
+    if (isNaN(n)) return String(n);
+    if (n === 0) return "shunya";
+    if (n < 100) return ones[n] || String(n);
+    if (n < 1000) {
+      const h = Math.floor(n / 100);
+      const r = n % 100;
+      const prefix = h === 1 ? "ek sau" : ones[h] + " sau";
+      return r === 0 ? prefix : prefix + " " + ones[r];
+    }
+    // For larger numbers just return as-is (rare in medical context)
+    return String(n);
+  }
+
+  // Replace standalone numbers (not inside words) with Hindi equivalents
+  return text.replace(/\b(\d+)\b/g, (match) => numToHindi(match));
+}
+
 // ─── VOICE OUTPUT ─────────────────────────────────────────────────────────────
 async function speakText(text) {
   if (!window.speechSynthesis) return;
   window.speechSynthesis.cancel();
 
   // Clean text: remove markdown, HTML tags, emoji, and extra whitespace
-  const plain = text
-    .replace(/[*_`#]/g, "")
-    .replace(/<[^>]+>/g, "")
-    .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")  // strip emojis
-    .replace(/\s+/g, " ")
-    .trim();
+  // Then convert any remaining Arabic numerals to Hindi spoken words
+  const plain = convertNumbersToHindi(
+    text
+      .replace(/[*_`#]/g, "")
+      .replace(/<[^>]+>/g, "")
+      .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")  // strip emojis
+      .replace(/\s+/g, " ")
+      .trim()
+  );
 
   if (!plain) return;
 
