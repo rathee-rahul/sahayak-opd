@@ -23,7 +23,8 @@ app.add_middleware(
 )
 
 frontend_path = os.path.join(os.path.dirname(__file__), "../frontend")
-app.mount("/app", StaticFiles(directory=frontend_path, html=True), name="frontend")
+if os.path.exists(frontend_path):
+    app.mount("/app", StaticFiles(directory=frontend_path, html=True), name="frontend")
 
 # ── LOAD DOCTOR DATA ─────────────────────────────────────────
 DOCTOR_DATA_PATH = os.path.join(os.path.dirname(__file__), "doctor_data.json")
@@ -84,11 +85,9 @@ def search_doctor_by_name(query: str, hint_dept: str = None):
 
             similarity = fuzz.partial_ratio(query, doctor_name)
 
-            # Minimum similarity threshold
             if similarity >= 75:
                 score = similarity
 
-                # Department hint boost
                 if hint_dept and dept == hint_dept:
                     score += 10
 
@@ -111,7 +110,7 @@ class ChatRequest(BaseModel):
     history: list = []
 
 
-# ── CHAT ENDPOINT (STRICT JSON MODE ENABLED) ─────────────────
+# ── CHAT ENDPOINT ─────────────────────────────────────────
 @app.post("/chat")
 async def chat(request: ChatRequest):
 
@@ -127,7 +126,7 @@ async def chat(request: ChatRequest):
         messages=messages,
         max_tokens=1024,
         temperature=0.4,
-        response_format={"type": "json_object"}  # STRICT JSON MODE
+        response_format={"type": "json_object"}
     )
 
     raw = response.choices[0].message.content
@@ -210,4 +209,4 @@ def home():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+    uvicorn.run("backend.main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
