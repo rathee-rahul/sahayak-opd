@@ -49,4 +49,4 @@ urllib3==2.6.3
 uvicorn==0.41.0
 websockets==16.0
 thefuzz==0.22.1
-python-Levenshtein==0.25.1
+
