@@ -446,6 +446,112 @@ async function speakText(text) {
   window.speechSynthesis.speak(utt);
 }
  
+
+// ── TILE 1: Symptom Flow ──────────────────────────────────────
+function startSymptomFlow() {
+  appendMessage('bot', '<span class="hi">अपनी तकलीफ बताइए — जैसे सिरदर्द, बुखार, पेट दर्द आदि।</span><span class="en">Please describe your symptoms.</span>');
+  const input = document.getElementById('chatInput');
+  input.placeholder = 'अपने लक्षण लिखें… · Type your symptoms…';
+  input.focus();
+}
+
+// ── TILE 2: Doctor Search ─────────────────────────────────────
+function startDoctorSearch() {
+  appendMessage('bot', '<span class="hi">डॉक्टर का नाम लिखें — जैसे "Dr. Anita Dhar" या "Dr. Sharma"</span><span class="en">Type the doctor name to find their OPD schedule.</span>');
+  const input = document.getElementById('chatInput');
+  input.placeholder = 'डॉक्टर का नाम लिखें… · Type doctor name…';
+  input.focus();
+}
+
+// ── TILE 3: Department Picker ─────────────────────────────────
+const DEPARTMENTS = [
+  "Medicine (General)", "Paediatrics (Children)", "Surgery (General)",
+  "Obstetrics & Gynaecology", "Orthopaedics (Bones & Joints)",
+  "Dermatology & Venereology (Skin)", "Otorhinolaryngology - ENT",
+  "Psychiatry (Mental Health)", "Urology (Kidney & Urinary)",
+  "Gastroenterology (Stomach & Digestion)", "G.I. Surgery (Stomach Surgery)",
+  "Nephrology (Kidney Disease)", "Endocrinology (Diabetes & Hormones)",
+  "Geriatric Medicine (Elderly Care)", "Rheumatology (Joint & Autoimmune)",
+  "Physical Medicine & Rehabilitation", "Haematology (Blood Disorders)",
+  "Burns & Plastic Surgery", "Paediatric Surgery (Children Surgery)",
+  "Cardiology (Heart)", "Cardiothoracic & Vascular Surgery (Heart Surgery)",
+  "Neurology (Brain & Nerves)", "Neurosurgery (Brain Surgery)",
+  "Ophthalmology (Eyes)", "Dental Surgery", "Oncology (Cancer)",
+  "Pulmonary Medicine", "Casualty / Emergency"
+];
+
+function showDeptPicker() {
+  const overlay = document.getElementById('deptPickerOverlay');
+  const grid = document.getElementById('deptPickerGrid');
+  grid.innerHTML = DEPARTMENTS.map((dept, i) => `
+    <button class="dept-chip-btn" onclick="selectDepartment(DEPARTMENTS[${i}])">
+      <span>${dept}</span>
+      <span class="dept-chip-today" id="today-${dept.replace(/[^a-zA-Z]/g,'')}"></span>
+    </button>
+  `).join('');
+  overlay.classList.add('active');
+  // Load today counts from backend
+  fetch('/departments').then(r => r.json()).then(data => {
+    data.departments.forEach(d => {
+      const el = document.getElementById('today-' + d.name.replace(/[^a-zA-Z]/g,''));
+      if (el && d.available_today > 0) el.textContent = '🟢 ' + d.available_today + ' today';
+    });
+  }).catch(() => {});
+}
+
+function closeDeptPicker(e) {
+  if (!e || e.target === document.getElementById('deptPickerOverlay')) {
+    document.getElementById('deptPickerOverlay').classList.remove('active');
+  }
+}
+
+function selectDepartment(dept) {
+  document.getElementById('deptPickerOverlay').classList.remove('active');
+  const msg = dept + ' mein kaun se doctors hain?';
+  document.getElementById('chatInput').value = msg;
+  sendMessage(msg);
+}
+
+// ── TILE 4: Emergency Direct (no backend wait) ────────────────
+function showEmergencyDirect() {
+  const chat = document.getElementById('chatArea');
+
+  // User bubble
+  const userRow = document.createElement('div');
+  userRow.className = 'user-row';
+  userRow.innerHTML = '<div class="user-bubble">🚨 Emergency & Helpline</div>';
+  chat.appendChild(userRow);
+
+  // Emergency alert card — instant, no API call
+  const el = document.createElement('div');
+  el.className = 'emergency-alert';
+  el.innerHTML = `
+    <div class="emergency-icon">🚨</div>
+    <div>
+      <strong>AIIMS Emergency — 24×7</strong><br>
+      <b>Casualty Block, AIIMS New Delhi</b><br><br>
+      📞 <b>011-26588500</b> — Main Hospital<br>
+      📞 <b>011-26588700</b> — Emergency<br>
+      📞 <b>102</b> — Ambulance (Free)<br>
+      📞 <b>112</b> — Police / Fire / Medical<br><br>
+      <small>🏥 Casualty OPD: Gate No. 1, 24×7 uplabdh | Always open</small>
+    </div>
+  `;
+  chat.appendChild(el);
+
+  // Bot follow-up message
+  const botRow = document.createElement('div');
+  botRow.className = 'bot-row';
+  botRow.innerHTML = `
+    <div class="avatar-sm">🩺</div>
+    <div class="bot-bubble">
+      <span class="hi">अगर यह emergency है — तुरंत Casualty Block जाएं या 102 call करें। 🙏</span>
+      <span class="en">If this is an emergency, go to Casualty immediately or call 102.</span>
+    </div>`;
+  chat.appendChild(botRow);
+  chat.scrollTop = chat.scrollHeight;
+}
+
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
   // Preload voices immediately so they're ready when needed

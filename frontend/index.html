@@ -93,42 +93,46 @@
       <div class="chip-label">क्या जानना चाहते हैं? · What can I help with?</div>
       <div class="action-tiles-grid">
 
-        <button class="action-tile tile-blue" onclick="fillInput('मेरे लक्षण के हिसाब से कौन सा विभाग सही रहेगा?')">
+        <!-- TILE 1: Find Department by Symptoms -->
+        <button class="action-tile tile-blue" onclick="startSymptomFlow()">
           <div class="tile-icon">🔍</div>
           <div class="tile-body">
-            <div class="tile-title">Know Your Department</div>
-            <div class="tile-sub">लक्षण बताएं, सही विभाग जानें</div>
-            <div class="tile-sub-en">Find dept. by your symptom</div>
+            <div class="tile-title">Find Your Department</div>
+            <div class="tile-sub">लक्षण बताएं → सही विभाग जानें</div>
+            <div class="tile-sub-en">Describe symptoms · get routed</div>
           </div>
           <div class="tile-arrow">›</div>
         </button>
 
-        <button class="action-tile tile-green" onclick="fillInput('मेरे डॉक्टर का OPD schedule क्या है?')">
+        <!-- TILE 2: Doctor OPD Schedule -->
+        <button class="action-tile tile-green" onclick="startDoctorSearch()">
           <div class="tile-icon">👩‍⚕️</div>
           <div class="tile-body">
             <div class="tile-title">Doctor & OPD Schedule</div>
-            <div class="tile-sub">डॉक्टर का नाम या विभाग बताएं</div>
-            <div class="tile-sub-en">Doctor name · OPD days & time</div>
+            <div class="tile-sub">डॉक्टर का नाम बताएं → schedule देखें</div>
+            <div class="tile-sub-en">Type doctor name · see OPD days</div>
           </div>
           <div class="tile-arrow">›</div>
         </button>
 
-        <button class="action-tile tile-purple" onclick="fillInput('AIIMS OPD के समय और दिन क्या हैं?')">
-          <div class="tile-icon">🕐</div>
+        <!-- TILE 3: Browse by Department (chip picker) -->
+        <button class="action-tile tile-purple" onclick="showDeptPicker()">
+          <div class="tile-icon">🏥</div>
           <div class="tile-body">
-            <div class="tile-title">OPD Timings & Days</div>
-            <div class="tile-sub">किस दिन, किस समय OPD खुलती है</div>
-            <div class="tile-sub-en">OPD hours · open days</div>
+            <div class="tile-title">Browse by Department</div>
+            <div class="tile-sub">विभाग चुनें → आज के डॉक्टर देखें</div>
+            <div class="tile-sub-en">Pick a dept · see today's doctors</div>
           </div>
           <div class="tile-arrow">›</div>
         </button>
 
-        <button class="action-tile tile-red" onclick="fillInput('Emergency helpline number क्या है?')">
+        <!-- TILE 4: Emergency (instant, no backend wait) -->
+        <button class="action-tile tile-red" onclick="showEmergencyDirect()">
           <div class="tile-icon">🚨</div>
           <div class="tile-body">
             <div class="tile-title">Emergency & Helpline</div>
-            <div class="tile-sub">आपातकाल में क्या करें</div>
-            <div class="tile-sub-en">Emergency contacts · helpline</div>
+            <div class="tile-sub">आपातकाल में तुरंत मदद</div>
+            <div class="tile-sub-en">Instant emergency info · no wait</div>
           </div>
           <div class="tile-arrow">›</div>
         </button>
@@ -167,6 +171,18 @@
       </button>
     </div>
     <div class="footer-credit">Developed by <span>Rahul Rathee</span> &nbsp;·&nbsp; सही OPD, सही डॉक्टर</div>
+  </div>
+
+
+  <!-- DEPARTMENT PICKER MODAL -->
+  <div class="dept-picker-overlay" id="deptPickerOverlay" onclick="closeDeptPicker(event)">
+    <div class="dept-picker-modal">
+      <div class="dept-picker-header">
+        <span>🏥 विभाग चुनें · Select Department</span>
+        <button class="dept-picker-close" onclick="closeDeptPicker()">✕</button>
+      </div>
+      <div class="dept-picker-grid" id="deptPickerGrid"></div>
+    </div>
   </div>
 
 </div>

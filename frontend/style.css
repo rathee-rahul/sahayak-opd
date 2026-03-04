@@ -744,3 +744,81 @@
 .tile-red .tile-title { color: #991b1b; }
 .tile-red .tile-sub, .tile-red .tile-sub-en { color: #dc2626; }
 .tile-red:hover { background: #ffe4e4; border-color: #ef4444; }
+
+
+/* ── Department Picker Modal ── */
+.dept-picker-overlay {
+  display: none;
+  position: absolute;
+  inset: 0;
+  background: rgba(6,28,60,0.7);
+  backdrop-filter: blur(6px);
+  z-index: 30;
+  border-radius: 38px;
+  align-items: flex-end;
+  justify-content: center;
+  animation: overlayIn 0.25s ease;
+}
+.dept-picker-overlay.active { display: flex; }
+.dept-picker-modal {
+  background: #fff;
+  border-radius: 24px 24px 0 0;
+  width: 100%;
+  max-height: 70%;
+  overflow-y: auto;
+  padding: 16px 14px 24px;
+}
+.dept-picker-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0a3d6b;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eef2f7;
+}
+.dept-picker-close {
+  background: #eef2f7;
+  border: none;
+  border-radius: 50%;
+  width: 26px; height: 26px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #334155;
+}
+.dept-picker-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dept-chip-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 13px;
+  background: #f0f6ff;
+  border: 1.5px solid rgba(21,101,192,0.15);
+  border-radius: 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #0a3d6b;
+  cursor: pointer;
+  text-align: left;
+  font-family: 'DM Sans', sans-serif;
+  transition: all 0.15s;
+}
+.dept-chip-btn:hover {
+  background: #dbeafe;
+  border-color: #1565c0;
+}
+.dept-chip-today {
+  font-size: 10px;
+  background: #dcfce7;
+  color: #166534;
+  border-radius: 8px;
+  padding: 2px 7px;
+  font-weight: 600;
+  white-space: nowrap;
+}
