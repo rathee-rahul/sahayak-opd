@@ -225,13 +225,15 @@ function buildCard(doc, dept) {
     ? doc.conditions.split(",").slice(0, 4).map(c => `<span class="cond-chip">${c.trim()}</span>`).join("") : "";
   const subSpec    = doc.sub_specialty ? `<span class="tag tag-blue">${doc.sub_specialty}</span>` : "";
   const preferred  = doc.preferred_for ? `<span class="tag tag-green">${doc.preferred_for}</span>` : "";
+  const isJPNATC   = (doc.center || "").toUpperCase() === "JPNATC";
   const centerLine = doc.center   ? `<div class="cd-row"><span>🏥</span><span>${doc.center}</span></div>` : "";
   const locLine    = doc.location ? `<div class="cd-row"><span>📍</span><span>${doc.location}</span></div>` : "";
   const roomLine   = doc.room     ? `<div class="cd-row"><span>🚪</span><span>${doc.room}</span></div>` : "";
   const notesLine  = doc.notes    ? `<div class="cd-row cd-notes"><span>📝</span><span>${doc.notes}</span></div>` : "";
   const deptTag    = dept         ? `<div class="card-dept-label">${dept}</div>` : "";
   return `
-    <div class="doctor-card ${isToday ? "card-today" : ""}">
+    <div class="doctor-card ${isToday ? "card-today" : ""} ${isJPNATC ? "card-jpnatc" : ""}">
+      ${isJPNATC ? '<div class="jpnatc-banner">⚠️ JPNATC — Trauma Centre Only · Walk-in OPD नहीं है</div>' : ""}
       ${isToday ? '<div class="today-ribbon">Available Today</div>' : ""}
       <div class="card-top">
         <div class="doc-avatar ${isToday ? "avatar-today" : ""}">${initials}</div>

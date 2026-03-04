@@ -822,3 +822,21 @@
   font-weight: 600;
   white-space: nowrap;
 }
+
+
+/* ── JPNATC Card Styling ── */
+.card-jpnatc {
+  border: 1.5px solid #f59e0b !important;
+  background: #fffbeb !important;
+  opacity: 0.92;
+}
+.jpnatc-banner {
+  background: #fef3c7;
+  border-bottom: 1px solid #f59e0b;
+  color: #92400e;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 5px 12px;
+  border-radius: 12px 12px 0 0;
+  letter-spacing: 0.1px;
+}

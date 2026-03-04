@@ -177,10 +177,12 @@ async def chat(request: ChatRequest):
     # ── INTENT: BROWSE DEPARTMENT ─────────────────────────────
     elif intent == "browse_department" and department:
         all_docs = DOCTOR_DATA.get(department, [])
-        # Sort: today's doctors first
-        todays  = [d for d in all_docs if is_available_today(d.get("opd_days", ""))]
-        others  = [d for d in all_docs if not is_available_today(d.get("opd_days", ""))]
-        dept_doctors = todays + others
+        # Sort: today's non-JPNATC first, then others non-JPNATC, then JPNATC last
+        def is_jpnatc(d): return (d.get("center", "") or "").upper() == "JPNATC"
+        todays_main  = [d for d in all_docs if is_available_today(d.get("opd_days", "")) and not is_jpnatc(d)]
+        others_main  = [d for d in all_docs if not is_available_today(d.get("opd_days", "")) and not is_jpnatc(d)]
+        jpnatc_docs  = [d for d in all_docs if is_jpnatc(d)]
+        dept_doctors = todays_main + others_main + jpnatc_docs
 
     # ── INTENT: FIND DEPARTMENT (symptom-based) ───────────────
     elif intent == "find_department" and department:
@@ -188,9 +190,13 @@ async def chat(request: ChatRequest):
         all_matches  = search_by_condition(search_query, preferred_dept=department)
 
         if all_matches:
-            dept_doctors = [m["doctor"] for m in all_matches[:10]]
+            # Push JPNATC doctors to end
+            non_jpnatc = [m["doctor"] for m in all_matches[:10] if (m["doctor"].get("center","") or "").upper() != "JPNATC"]
+            jpnatc     = [m["doctor"] for m in all_matches[:10] if (m["doctor"].get("center","") or "").upper() == "JPNATC"]
+            dept_doctors = non_jpnatc + jpnatc
         else:
-            dept_doctors = DOCTOR_DATA.get(department, [])
+            all_docs = DOCTOR_DATA.get(department, [])
+            dept_doctors = [d for d in all_docs if (d.get("center","") or "").upper() != "JPNATC"] +                            [d for d in all_docs if (d.get("center","") or "").upper() == "JPNATC"]
 
     # ── INTENT: EMERGENCY ─────────────────────────────────────
     elif intent == "emergency" or is_emergency:
@@ -202,9 +208,12 @@ async def chat(request: ChatRequest):
         search_query = (sub_spec or "") + " " + request.message
         all_matches  = search_by_condition(search_query, preferred_dept=department)
         if all_matches:
-            dept_doctors = [m["doctor"] for m in all_matches[:10]]
+            non_jpnatc = [m["doctor"] for m in all_matches[:10] if (m["doctor"].get("center","") or "").upper() != "JPNATC"]
+            jpnatc     = [m["doctor"] for m in all_matches[:10] if (m["doctor"].get("center","") or "").upper() == "JPNATC"]
+            dept_doctors = non_jpnatc + jpnatc
         else:
-            dept_doctors = DOCTOR_DATA.get(department, [])
+            all_docs = DOCTOR_DATA.get(department, [])
+            dept_doctors = [d for d in all_docs if (d.get("center","") or "").upper() != "JPNATC"] +                            [d for d in all_docs if (d.get("center","") or "").upper() == "JPNATC"]
 
     return {
         "reply": reply,
