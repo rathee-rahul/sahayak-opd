@@ -81,6 +81,106 @@ def search_by_condition(query: str, preferred_dept: str = None) -> list:
     return results
 
 
+
+# ── DEPARTMENT VERIFICATION (Option 2) ───────────────────────
+# If LLM suggests a department but condition search finds stronger
+# matches in another department, override with the better match.
+SYMPTOM_DEPT_MAP = {
+    # Cardiology
+    "palpitations": "Cardiology (Heart)",
+    "arrhythmia": "Cardiology (Heart)",
+    "heart attack": "Cardiology (Heart)",
+    "heart failure": "Cardiology (Heart)",
+    "ecg": "Cardiology (Heart)",
+    # Pulmonary
+    "cough": "Pulmonary Medicine",
+    "asthma": "Pulmonary Medicine",
+    "copd": "Pulmonary Medicine",
+    "tb": "Pulmonary Medicine",
+    "tuberculosis": "Pulmonary Medicine",
+    "haemoptysis": "Pulmonary Medicine",
+    "ild": "Pulmonary Medicine",
+    # Gastroenterology
+    "acidity": "Gastroenterology (Stomach & Digestion)",
+    "jaundice": "Gastroenterology (Stomach & Digestion)",
+    "hepatitis": "Gastroenterology (Stomach & Digestion)",
+    "ibs": "Gastroenterology (Stomach & Digestion)",
+    "cirrhosis": "Gastroenterology (Stomach & Digestion)",
+    # Neurology
+    "epilepsy": "Neurology (Brain & Nerves)",
+    "seizure": "Neurology (Brain & Nerves)",
+    "migraine": "Neurology (Brain & Nerves)",
+    "neuropathy": "Neurology (Brain & Nerves)",
+    "multiple sclerosis": "Neurology (Brain & Nerves)",
+    # Rheumatology
+    "rheumatoid": "Rheumatology (Joint & Autoimmune)",
+    "lupus": "Rheumatology (Joint & Autoimmune)",
+    "autoimmune": "Rheumatology (Joint & Autoimmune)",
+    "gout": "Rheumatology (Joint & Autoimmune)",
+    "ankylosing": "Rheumatology (Joint & Autoimmune)",
+    # Nephrology
+    "creatinine": "Nephrology (Kidney Disease)",
+    "dialysis": "Nephrology (Kidney Disease)",
+    "nephritis": "Nephrology (Kidney Disease)",
+    "chronic kidney": "Nephrology (Kidney Disease)",
+    # Urology
+    "kidney stone": "Urology (Kidney & Urinary)",
+    "pathri": "Urology (Kidney & Urinary)",
+    "prostate": "Urology (Kidney & Urinary)",
+    "blood in urine": "Urology (Kidney & Urinary)",
+    # Endocrinology
+    "diabetes": "Endocrinology (Diabetes & Hormones)",
+    "thyroid": "Endocrinology (Diabetes & Hormones)",
+    "hormonal": "Endocrinology (Diabetes & Hormones)",
+    # Dermatology
+    "skin rash": "Dermatology & Venereology (Skin)",
+    "psoriasis": "Dermatology & Venereology (Skin)",
+    "eczema": "Dermatology & Venereology (Skin)",
+    "hair loss": "Dermatology & Venereology (Skin)",
+    # ENT
+    "vertigo": "Otorhinolaryngology - ENT",
+    "tinnitus": "Otorhinolaryngology - ENT",
+    "sinusitis": "Otorhinolaryngology - ENT",
+    "hearing loss": "Otorhinolaryngology - ENT",
+    # Psychiatry
+    "depression": "Psychiatry (Mental Health)",
+    "anxiety": "Psychiatry (Mental Health)",
+    "addiction": "Psychiatry (Mental Health)",
+    "bipolar": "Psychiatry (Mental Health)",
+    # Haematology
+    "thalassemia": "Haematology (Blood Disorders)",
+    "leukaemia": "Haematology (Blood Disorders)",
+    "leukemia": "Haematology (Blood Disorders)",
+    "bleeding disorder": "Haematology (Blood Disorders)",
+    "platelet": "Haematology (Blood Disorders)",
+    # Oncology
+    "chemotherapy": "Oncology (Cancer)",
+    "radiation therapy": "Oncology (Cancer)",
+    "tumour": "Oncology (Cancer)",
+    "cancer": "Oncology (Cancer)",
+}
+
+def verify_department(llm_dept: str, message: str) -> str:
+    """
+    Cross-check LLM suggested department against symptom keyword map.
+    If a high-confidence keyword match points to a different dept, override.
+    Returns the verified (possibly corrected) department name.
+    """
+    if not llm_dept or not message:
+        return llm_dept
+
+    msg_lower = message.lower()
+
+    for keyword, correct_dept in SYMPTOM_DEPT_MAP.items():
+        if keyword in msg_lower:
+            # Only override if LLM picked a different department
+            if correct_dept != llm_dept:
+                return correct_dept
+            else:
+                return llm_dept  # LLM was correct, confirm it
+
+    return llm_dept  # No override needed
+
 def filter_by_sub_specialty(doctors: list, sub_specialty: str) -> list:
     if not sub_specialty:
         return doctors
@@ -151,6 +251,9 @@ async def chat(request: ChatRequest):
         is_emergency = parsed.get("is_emergency", False)
         doctor_query = parsed.get("doctor_query")
         intent       = parsed.get("intent", "general")
+        # ── OPTION 2: Verify department against symptom map ──
+        if department and intent in ("find_department", "general"):
+            department = verify_department(department, request.message)
     except json.JSONDecodeError:
         reply        = "System error. Kripya dobara try karein."
         department   = None
