@@ -231,7 +231,7 @@ def call_llm(messages: list) -> str:
     # 2️⃣ FALLBACK: Cerebras
     try:
         response = cerebras_client.chat.completions.create(
-            model="llama-4-scout-17b-16e-instruct",
+            model="llama3.1-8b",
             messages=messages,
             max_tokens=1024,
             temperature=0.4,
