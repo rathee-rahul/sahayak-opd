@@ -9,7 +9,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(__file__))
 
 from groq import Groq
-import google.generativeai as genai
+from google import genai
 from prompt import SYSTEM_PROMPT
 from thefuzz import fuzz
 
@@ -17,11 +17,7 @@ load_dotenv()
 
 # ── API CLIENTS ───────────────────────────────────────────────
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-gemini_model = genai.GenerativeModel(
-    model_name="gemini-2.0-flash",
-    generation_config={"response_mime_type": "application/json"}
-)
+gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 app = FastAPI()
 
@@ -88,7 +84,7 @@ def search_by_condition(query: str, preferred_dept: str = None) -> list:
     return results
 
 
-# ── DEPARTMENT VERIFICATION (Option 2) ───────────────────────
+# ── DEPARTMENT VERIFICATION ───────────────────────────────────
 SYMPTOM_DEPT_MAP = {
     # Cardiology
     "palpitations": "Cardiology (Heart)",
@@ -212,8 +208,28 @@ def get_todays_doctors(department: str = None) -> list:
 
 
 # ── LLM CALL WITH GROQ → GEMINI FALLBACK ─────────────────────
+def call_gemini(messages: list) -> str:
+    """Call Gemini 2.0 Flash using new google-genai library."""
+    system_msg = next((m["content"] for m in messages if m["role"] == "system"), "")
+    conversation = ""
+    for m in messages:
+        if m["role"] == "user":
+            conversation += f"User: {m['content']}\n"
+        elif m["role"] == "assistant":
+            conversation += f"Assistant: {m['content']}\n"
+
+    full_prompt = f"{system_msg}\n\n{conversation}\nRespond only in valid JSON, no markdown."
+
+    response = gemini_client.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=full_prompt,
+    )
+    print("[LLM] Gemini responded successfully")
+    return response.text
+
+
 def call_llm(messages: list) -> str:
-    """Try Groq first, fall back to Gemini 2.0 Flash if Groq fails."""
+    """Try Groq first, fall back to Gemini 2.0 Flash on any error."""
     try:
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
@@ -222,24 +238,12 @@ def call_llm(messages: list) -> str:
             temperature=0.4,
             response_format={"type": "json_object"}
         )
+        print("[LLM] Groq responded successfully")
         return response.choices[0].message.content
 
     except Exception as groq_error:
         print(f"[Groq failed] {groq_error} → switching to Gemini")
-
-        # Build Gemini prompt from messages
-        system_msg = next((m["content"] for m in messages if m["role"] == "system"), "")
-        conversation = ""
-        for m in messages:
-            if m["role"] == "user":
-                conversation += f"User: {m['content']}\n"
-            elif m["role"] == "assistant":
-                conversation += f"Assistant: {m['content']}\n"
-
-        full_prompt = f"{system_msg}\n\n{conversation}\nRespond only in JSON."
-
-        gemini_response = gemini_model.generate_content(full_prompt)
-        return gemini_response.text
+        return call_gemini(messages)
 
 
 # ── REQUEST MODEL ─────────────────────────────────────────────
