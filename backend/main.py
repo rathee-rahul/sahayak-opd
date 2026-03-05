@@ -9,12 +9,19 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(__file__))
 
 from groq import Groq
+import google.generativeai as genai
 from prompt import SYSTEM_PROMPT
 from thefuzz import fuzz
 
 load_dotenv()
 
-client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+# ── API CLIENTS ───────────────────────────────────────────────
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+gemini_model = genai.GenerativeModel(
+    model_name="gemini-2.0-flash",
+    generation_config={"response_mime_type": "application/json"}
+)
 
 app = FastAPI()
 
@@ -81,10 +88,7 @@ def search_by_condition(query: str, preferred_dept: str = None) -> list:
     return results
 
 
-
 # ── DEPARTMENT VERIFICATION (Option 2) ───────────────────────
-# If LLM suggests a department but condition search finds stronger
-# matches in another department, override with the better match.
 SYMPTOM_DEPT_MAP = {
     # Cardiology
     "palpitations": "Cardiology (Heart)",
@@ -161,25 +165,16 @@ SYMPTOM_DEPT_MAP = {
 }
 
 def verify_department(llm_dept: str, message: str) -> str:
-    """
-    Cross-check LLM suggested department against symptom keyword map.
-    If a high-confidence keyword match points to a different dept, override.
-    Returns the verified (possibly corrected) department name.
-    """
     if not llm_dept or not message:
         return llm_dept
-
     msg_lower = message.lower()
-
     for keyword, correct_dept in SYMPTOM_DEPT_MAP.items():
         if keyword in msg_lower:
-            # Only override if LLM picked a different department
             if correct_dept != llm_dept:
                 return correct_dept
             else:
-                return llm_dept  # LLM was correct, confirm it
-
-    return llm_dept  # No override needed
+                return llm_dept
+    return llm_dept
 
 def filter_by_sub_specialty(doctors: list, sub_specialty: str) -> list:
     if not sub_specialty:
@@ -195,14 +190,12 @@ def filter_by_sub_specialty(doctors: list, sub_specialty: str) -> list:
 def search_doctor_by_name(query: str, hint_dept: str = None):
     query = query.lower().strip()
     results = []
-
     for dept, doctors in DOCTOR_DATA.items():
         for doc in doctors:
             similarity = fuzz.partial_ratio(query, doc["name"].lower())
             if similarity >= 75:
                 score = similarity + (10 if hint_dept and dept == hint_dept else 0)
                 results.append({"dept": dept, "doctor": doc, "score": score})
-
     results.sort(key=lambda x: -x["score"])
     return results[:10]
 
@@ -216,6 +209,37 @@ def get_todays_doctors(department: str = None) -> list:
             if is_available_today(doc.get("opd_days", "")):
                 results.append({"dept": dept, "doctor": doc})
     return results
+
+
+# ── LLM CALL WITH GROQ → GEMINI FALLBACK ─────────────────────
+def call_llm(messages: list) -> str:
+    """Try Groq first, fall back to Gemini 2.0 Flash if Groq fails."""
+    try:
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=messages,
+            max_tokens=1024,
+            temperature=0.4,
+            response_format={"type": "json_object"}
+        )
+        return response.choices[0].message.content
+
+    except Exception as groq_error:
+        print(f"[Groq failed] {groq_error} → switching to Gemini")
+
+        # Build Gemini prompt from messages
+        system_msg = next((m["content"] for m in messages if m["role"] == "system"), "")
+        conversation = ""
+        for m in messages:
+            if m["role"] == "user":
+                conversation += f"User: {m['content']}\n"
+            elif m["role"] == "assistant":
+                conversation += f"Assistant: {m['content']}\n"
+
+        full_prompt = f"{system_msg}\n\n{conversation}\nRespond only in JSON."
+
+        gemini_response = gemini_model.generate_content(full_prompt)
+        return gemini_response.text
 
 
 # ── REQUEST MODEL ─────────────────────────────────────────────
@@ -233,15 +257,7 @@ async def chat(request: ChatRequest):
         messages.append({"role": item["role"], "content": item["content"]})
     messages.append({"role": "user", "content": request.message})
 
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=messages,
-        max_tokens=1024,
-        temperature=0.4,
-        response_format={"type": "json_object"}
-    )
-
-    raw = response.choices[0].message.content
+    raw = call_llm(messages)
 
     try:
         parsed       = json.loads(raw)
@@ -251,7 +267,6 @@ async def chat(request: ChatRequest):
         is_emergency = parsed.get("is_emergency", False)
         doctor_query = parsed.get("doctor_query")
         intent       = parsed.get("intent", "general")
-        # ── OPTION 2: Verify department against symptom map ──
         if department and intent in ("find_department", "general"):
             department = verify_department(department, request.message)
     except json.JSONDecodeError:
@@ -273,14 +288,12 @@ async def chat(request: ChatRequest):
         matches = search_doctor_by_name(doctor_query, hint_dept=department)
         if matches:
             doctor_results = [{"dept": m["dept"], "doctor": m["doctor"]} for m in matches]
-            # Check if ambiguous (multiple different doctors matched)
             unique_names = set(m["doctor"]["name"] for m in matches)
             ambiguous = len(unique_names) > 1 and len(doctor_query.split()) <= 1
 
     # ── INTENT: BROWSE DEPARTMENT ─────────────────────────────
     elif intent == "browse_department" and department:
         all_docs = DOCTOR_DATA.get(department, [])
-        # Sort: today's non-JPNATC first, then others non-JPNATC, then JPNATC last
         def is_jpnatc(d): return (d.get("center", "") or "").upper() == "JPNATC"
         todays_main  = [d for d in all_docs if is_available_today(d.get("opd_days", "")) and not is_jpnatc(d)]
         others_main  = [d for d in all_docs if not is_available_today(d.get("opd_days", "")) and not is_jpnatc(d)]
@@ -291,22 +304,21 @@ async def chat(request: ChatRequest):
     elif intent == "find_department" and department:
         search_query = (sub_spec or "") + " " + request.message
         all_matches  = search_by_condition(search_query, preferred_dept=department)
-
         if all_matches:
-            # Push JPNATC doctors to end
             non_jpnatc = [m["doctor"] for m in all_matches[:10] if (m["doctor"].get("center","") or "").upper() != "JPNATC"]
             jpnatc     = [m["doctor"] for m in all_matches[:10] if (m["doctor"].get("center","") or "").upper() == "JPNATC"]
             dept_doctors = non_jpnatc + jpnatc
         else:
             all_docs = DOCTOR_DATA.get(department, [])
-            dept_doctors = [d for d in all_docs if (d.get("center","") or "").upper() != "JPNATC"] +                            [d for d in all_docs if (d.get("center","") or "").upper() == "JPNATC"]
+            dept_doctors = [d for d in all_docs if (d.get("center","") or "").upper() != "JPNATC"] + \
+                           [d for d in all_docs if (d.get("center","") or "").upper() == "JPNATC"]
 
     # ── INTENT: EMERGENCY ─────────────────────────────────────
     elif intent == "emergency" or is_emergency:
         is_emergency = True
         department   = "Casualty / Emergency"
 
-    # ── FALLBACK: old logic for general messages ──────────────
+    # ── FALLBACK ──────────────────────────────────────────────
     elif department and not doctor_query:
         search_query = (sub_spec or "") + " " + request.message
         all_matches  = search_by_condition(search_query, preferred_dept=department)
@@ -316,7 +328,8 @@ async def chat(request: ChatRequest):
             dept_doctors = non_jpnatc + jpnatc
         else:
             all_docs = DOCTOR_DATA.get(department, [])
-            dept_doctors = [d for d in all_docs if (d.get("center","") or "").upper() != "JPNATC"] +                            [d for d in all_docs if (d.get("center","") or "").upper() == "JPNATC"]
+            dept_doctors = [d for d in all_docs if (d.get("center","") or "").upper() != "JPNATC"] + \
+                           [d for d in all_docs if (d.get("center","") or "").upper() == "JPNATC"]
 
     return {
         "reply": reply,
@@ -333,7 +346,7 @@ async def chat(request: ChatRequest):
     }
 
 
-# ── BROWSE DEPT ENDPOINT (for tile 3 direct API call) ────────
+# ── BROWSE DEPT ENDPOINT ──────────────────────────────────────
 @app.get("/browse-department")
 def browse_department(department: str = Query(...)):
     all_docs = DOCTOR_DATA.get(department, [])
