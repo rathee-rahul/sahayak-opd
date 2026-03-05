@@ -221,7 +221,7 @@ def call_gemini(messages: list) -> str:
     full_prompt = f"{system_msg}\n\n{conversation}\nRespond only in valid JSON, no markdown."
 
     response = gemini_client.models.generate_content(
-        model="gemini-2.0-flash",
+        model="gemini-1.5-flash",
         contents=full_prompt,
     )
     print("[LLM] Gemini responded successfully")
