@@ -9,7 +9,7 @@ from datetime import datetime
 sys.path.insert(0, os.path.dirname(__file__))
 
 from groq import Groq
-from google import genai
+from openai import OpenAI
 from prompt import SYSTEM_PROMPT
 from thefuzz import fuzz
 
@@ -17,7 +17,10 @@ load_dotenv()
 
 # ── API CLIENTS ───────────────────────────────────────────────
 groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+cerebras_client = OpenAI(
+    base_url="https://api.cerebras.ai/v1",
+    api_key=os.getenv("CEREBRAS_API_KEY")
+)
 
 app = FastAPI()
 
@@ -207,29 +210,11 @@ def get_todays_doctors(department: str = None) -> list:
     return results
 
 
-# ── LLM CALL WITH GROQ → GEMINI FALLBACK ─────────────────────
-def call_gemini(messages: list) -> str:
-    """Call Gemini 2.0 Flash using new google-genai library."""
-    system_msg = next((m["content"] for m in messages if m["role"] == "system"), "")
-    conversation = ""
-    for m in messages:
-        if m["role"] == "user":
-            conversation += f"User: {m['content']}\n"
-        elif m["role"] == "assistant":
-            conversation += f"Assistant: {m['content']}\n"
-
-    full_prompt = f"{system_msg}\n\n{conversation}\nRespond only in valid JSON, no markdown."
-
-    response = gemini_client.models.generate_content(
-        model="models/gemini-1.5-flash",
-        contents=full_prompt,
-    )
-    print("[LLM] Gemini responded successfully")
-    return response.text
-
-
+# ── LLM CALL: GROQ PRIMARY → CEREBRAS FALLBACK ───────────────
 def call_llm(messages: list) -> str:
-    """Try Groq first, fall back to Gemini 2.0 Flash on any error."""
+    """Try Groq llama-3.3-70b first, fall back to Cerebras on failure."""
+
+    # 1️⃣ PRIMARY: Groq
     try:
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
@@ -238,13 +223,31 @@ def call_llm(messages: list) -> str:
             temperature=0.4,
             response_format={"type": "json_object"}
         )
-        print("[LLM] Groq responded successfully")
+        print("[LLM] Groq llama-3.3-70b responded successfully")
         return response.choices[0].message.content
+    except Exception as e:
+        print(f"[Groq failed] {e} → switching to Cerebras")
 
-    except Exception as groq_error:
-        print(f"[Groq failed] {groq_error} → switching to Gemini")
-        return call_gemini(messages)
+    # 2️⃣ FALLBACK: Cerebras
+    try:
+        response = cerebras_client.chat.completions.create(
+            model="llama-4-scout-17b-16e-instruct",
+            messages=messages,
+            max_tokens=1024,
+            temperature=0.4,
+            response_format={"type": "json_object"}
+        )
+        print("[LLM] Cerebras llama-4-scout responded successfully")
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"[Cerebras failed] {e} → all providers exhausted")
 
+    # ❌ All failed
+    return json.dumps({
+        "reply": "Abhi service temporarily unavailable hai. Thodi der mein dobara try karein.",
+        "department": None, "sub_specialty": None,
+        "is_emergency": False, "doctor_query": None, "intent": "general"
+    })
 
 # ── REQUEST MODEL ─────────────────────────────────────────────
 class ChatRequest(BaseModel):
