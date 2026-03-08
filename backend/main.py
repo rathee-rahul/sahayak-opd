@@ -1,17 +1,49 @@
+"""
+main.py — Sahayak v8
+Full pipeline rewire.
+
+v8 flow per /chat request:
+  ① sanitize_input()           — PII scrub, always first
+  ② keyword_scan() + LLM 1    — async parallel
+  ③ emergency_check()          — dual source, hardcoded
+  ④ run_engine()               — score top3, severity, self-care
+  ⑤ LLM 2 (clinical)          — final routing + reply
+  ⑥ doctor fetch               — from doctor_data.json
+  ⑦ log_if_ambiguous()         — async, fire-and-forget
+
+All other endpoints (/browse-department, /todays-doctors,
+/departments, /doctors) are UNCHANGED from v1.
+"""
+
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
-import os, sys, json, re
+import asyncio, os, sys, json, re
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 from groq import Groq
 from openai import OpenAI
-from prompt import SYSTEM_PROMPT
 from thefuzz import fuzz
+
+# ── v8 modules ────────────────────────────────────────────────
+from sanitize        import sanitize_input, was_sanitized
+from keyword_scan    import keyword_scan, any_emergency_flag
+from engine          import run_engine
+from extractor_prompt import (
+    EXTRACTOR_SYSTEM_PROMPT,
+    build_extractor_messages,
+    parse_extractor_response,
+)
+from clinical_prompt import (
+    CLINICAL_SYSTEM_PROMPT,
+    build_clinical_messages,
+    parse_clinical_response,
+)
+from ambiguity_log import log_if_ambiguous
 
 load_dotenv()
 
@@ -33,13 +65,29 @@ frontend_path = os.path.join(os.path.dirname(__file__), "../frontend")
 if os.path.exists(frontend_path):
     app.mount("/app", StaticFiles(directory=frontend_path, html=True), name="frontend")
 
-# ── LOAD DOCTOR DATA ─────────────────────────────────────────
+# ── LOAD DOCTOR DATA ──────────────────────────────────────────
 DOCTOR_DATA_PATH = os.path.join(os.path.dirname(__file__), "doctor_data.json")
 with open(DOCTOR_DATA_PATH, "r", encoding="utf-8") as f:
     DOCTOR_DATA = json.load(f)
 
-# ── TODAY DETECTION ──────────────────────────────────────────
-TODAY_NAME = datetime.now().strftime("%A")  # e.g. "Wednesday"
+# ── REFERRAL-REQUIRED DEPARTMENTS ────────────────────────────
+# These are AIIMS super-specialty departments.
+# Patients need a referral slip from a primary department first.
+# Source: AIIMS notice board + confirmed by user (March 2026)
+REFERRAL_REQUIRED_DEPTS = {
+    "Cardiology (Heart)",
+    "Neurology (Brain & Nerves)",
+    "Neurosurgery (Brain Surgery)",
+    "Endocrinology (Diabetes & Hormones)",
+    "Urology (Kidney & Urinary)",
+    "Nephrology",
+    "Pulmonary Medicine",
+    "Rheumatology (Joint & Autoimmune)",
+    "Haematology (Blood Disorders)",
+    "Gastroenterology (Stomach & Digestion)",
+    "G.I. Surgery (Stomach Surgery)",
+}
+TODAY_NAME = datetime.now().strftime("%A")
 TODAY_VARIANTS = {
     "Monday":    ["mon", "monday"],
     "Tuesday":   ["tue", "tuesday"],
@@ -57,14 +105,15 @@ def is_available_today(opd_days: str) -> bool:
     return any(v in lower for v in TODAY_VARIANTS.get(TODAY_NAME, []))
 
 
-# ── CONDITION SEARCH ─────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+# DOCTOR SEARCH FUNCTIONS — UNCHANGED FROM v1
+# ══════════════════════════════════════════════════════════════
+
 def search_by_condition(query: str, preferred_dept: str = None) -> list:
     query_lower = query.lower().strip()
     raw_words = [w.strip() for w in re.split(r'[\s,/]+', query_lower) if len(w.strip()) >= 3]
-
     results = []
     seen = set()
-
     for dept, doctors in DOCTOR_DATA.items():
         for doc in doctors:
             combined = (
@@ -72,9 +121,7 @@ def search_by_condition(query: str, preferred_dept: str = None) -> list:
                 doc.get("conditions", "") + " " +
                 doc.get("unit", "")
             ).lower()
-
             score = sum(2 for kw in raw_words if kw in combined)
-
             if score > 0:
                 key = (dept, doc["name"])
                 if key not in seen:
@@ -82,110 +129,10 @@ def search_by_condition(query: str, preferred_dept: str = None) -> list:
                     if preferred_dept and dept == preferred_dept:
                         score += 5
                     results.append({"dept": dept, "doctor": doc, "score": score})
-
     results.sort(key=lambda x: -x["score"])
     return results
 
 
-# ── DEPARTMENT VERIFICATION ───────────────────────────────────
-SYMPTOM_DEPT_MAP = {
-    # Cardiology
-    "palpitations": "Cardiology (Heart)",
-    "arrhythmia": "Cardiology (Heart)",
-    "heart attack": "Cardiology (Heart)",
-    "heart failure": "Cardiology (Heart)",
-    "ecg": "Cardiology (Heart)",
-    # Pulmonary
-    "cough": "Pulmonary Medicine",
-    "asthma": "Pulmonary Medicine",
-    "copd": "Pulmonary Medicine",
-    "tb": "Pulmonary Medicine",
-    "tuberculosis": "Pulmonary Medicine",
-    "haemoptysis": "Pulmonary Medicine",
-    "ild": "Pulmonary Medicine",
-    # Gastroenterology
-    "acidity": "Gastroenterology (Stomach & Digestion)",
-    "jaundice": "Gastroenterology (Stomach & Digestion)",
-    "hepatitis": "Gastroenterology (Stomach & Digestion)",
-    "ibs": "Gastroenterology (Stomach & Digestion)",
-    "cirrhosis": "Gastroenterology (Stomach & Digestion)",
-    # Neurology
-    "epilepsy": "Neurology (Brain & Nerves)",
-    "seizure": "Neurology (Brain & Nerves)",
-    "migraine": "Neurology (Brain & Nerves)",
-    "neuropathy": "Neurology (Brain & Nerves)",
-    "multiple sclerosis": "Neurology (Brain & Nerves)",
-    # Rheumatology
-    "rheumatoid": "Rheumatology (Joint & Autoimmune)",
-    "lupus": "Rheumatology (Joint & Autoimmune)",
-    "autoimmune": "Rheumatology (Joint & Autoimmune)",
-    "gout": "Rheumatology (Joint & Autoimmune)",
-    "ankylosing": "Rheumatology (Joint & Autoimmune)",
-    # Nephrology
-    "creatinine": "Nephrology (Kidney Disease)",
-    "dialysis": "Nephrology (Kidney Disease)",
-    "nephritis": "Nephrology (Kidney Disease)",
-    "chronic kidney": "Nephrology (Kidney Disease)",
-    # Urology
-    "kidney stone": "Urology (Kidney & Urinary)",
-    "pathri": "Urology (Kidney & Urinary)",
-    "prostate": "Urology (Kidney & Urinary)",
-    "blood in urine": "Urology (Kidney & Urinary)",
-    # Endocrinology
-    "diabetes": "Endocrinology (Diabetes & Hormones)",
-    "thyroid": "Endocrinology (Diabetes & Hormones)",
-    "hormonal": "Endocrinology (Diabetes & Hormones)",
-    # Dermatology
-    "skin rash": "Dermatology & Venereology (Skin)",
-    "psoriasis": "Dermatology & Venereology (Skin)",
-    "eczema": "Dermatology & Venereology (Skin)",
-    "hair loss": "Dermatology & Venereology (Skin)",
-    # ENT
-    "vertigo": "Otorhinolaryngology - ENT",
-    "tinnitus": "Otorhinolaryngology - ENT",
-    "sinusitis": "Otorhinolaryngology - ENT",
-    "hearing loss": "Otorhinolaryngology - ENT",
-    # Psychiatry
-    "depression": "Psychiatry (Mental Health)",
-    "anxiety": "Psychiatry (Mental Health)",
-    "addiction": "Psychiatry (Mental Health)",
-    "bipolar": "Psychiatry (Mental Health)",
-    # Haematology
-    "thalassemia": "Haematology (Blood Disorders)",
-    "leukaemia": "Haematology (Blood Disorders)",
-    "leukemia": "Haematology (Blood Disorders)",
-    "bleeding disorder": "Haematology (Blood Disorders)",
-    "platelet": "Haematology (Blood Disorders)",
-    # Oncology
-    "chemotherapy": "Oncology (Cancer)",
-    "radiation therapy": "Oncology (Cancer)",
-    "tumour": "Oncology (Cancer)",
-    "cancer": "Oncology (Cancer)",
-}
-
-def verify_department(llm_dept: str, message: str) -> str:
-    if not llm_dept or not message:
-        return llm_dept
-    msg_lower = message.lower()
-    for keyword, correct_dept in SYMPTOM_DEPT_MAP.items():
-        if keyword in msg_lower:
-            if correct_dept != llm_dept:
-                return correct_dept
-            else:
-                return llm_dept
-    return llm_dept
-
-def filter_by_sub_specialty(doctors: list, sub_specialty: str) -> list:
-    if not sub_specialty:
-        return doctors
-    keyword = sub_specialty.lower()
-    return [
-        doc for doc in doctors
-        if keyword in (doc.get("sub_specialty", "") + " " + doc.get("conditions", "")).lower()
-    ]
-
-
-# ── FUZZY DOCTOR NAME SEARCH ─────────────────────────────────
 def search_doctor_by_name(query: str, hint_dept: str = None):
     query = query.lower().strip()
     results = []
@@ -199,7 +146,6 @@ def search_doctor_by_name(query: str, hint_dept: str = None):
     return results[:10]
 
 
-# ── TODAY'S DOCTORS ACROSS ALL DEPTS ─────────────────────────
 def get_todays_doctors(department: str = None) -> list:
     results = []
     depts = {department: DOCTOR_DATA[department]} if department and department in DOCTOR_DATA else DOCTOR_DATA
@@ -210,150 +156,298 @@ def get_todays_doctors(department: str = None) -> list:
     return results
 
 
-# ── LLM CALL: GROQ PRIMARY → CEREBRAS FALLBACK ───────────────
-def call_llm(messages: list) -> str:
-    """Try Groq llama-3.3-70b first, fall back to Cerebras on failure."""
+def filter_by_sub_specialty(doctors: list, sub_specialty: str) -> list:
+    if not sub_specialty:
+        return doctors
+    keyword = sub_specialty.lower()
+    return [
+        doc for doc in doctors
+        if keyword in (doc.get("sub_specialty", "") + " " + doc.get("conditions", "")).lower()
+    ]
 
-    # 1️⃣ PRIMARY: Groq
+
+def _sort_jpnatc_last(doctors: list) -> list:
+    """Push JPNATC doctors to end — preserved from v1."""
+    non_jpnatc = [d for d in doctors if (d.get("center", "") or "").upper() != "JPNATC"]
+    jpnatc     = [d for d in doctors if (d.get("center", "") or "").upper() == "JPNATC"]
+    return non_jpnatc + jpnatc
+
+
+# ══════════════════════════════════════════════════════════════
+# LLM CALL FUNCTIONS
+# ══════════════════════════════════════════════════════════════
+
+def call_llm(system_prompt: str, messages: list, max_tokens: int = 512, label: str = "") -> str:
+    """Groq primary → Cerebras fallback. Returns raw JSON string."""
+    # PRIMARY: Groq
     try:
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
-            messages=messages,
-            max_tokens=1024,
-            temperature=0.4,
+            messages=[{"role": "system", "content": system_prompt}] + messages,
+            max_tokens=max_tokens,
+            temperature=0.2,
             response_format={"type": "json_object"}
         )
-        print("[LLM] Groq llama-3.3-70b responded successfully")
+        print(f"[LLM:{label}] Groq OK")
         return response.choices[0].message.content
     except Exception as e:
-        print(f"[Groq failed] {e} → switching to Cerebras")
+        print(f"[LLM:{label}] Groq failed: {e} → Cerebras")
 
-    # 2️⃣ FALLBACK: Cerebras
+    # FALLBACK: Cerebras
     try:
         response = cerebras_client.chat.completions.create(
             model="llama3.1-8b",
-            messages=messages,
-            max_tokens=1024,
-            temperature=0.4,
+            messages=[{"role": "system", "content": system_prompt}] + messages,
+            max_tokens=max_tokens,
+            temperature=0.2,
             response_format={"type": "json_object"}
         )
-        print("[LLM] Cerebras llama-4-scout responded successfully")
+        print(f"[LLM:{label}] Cerebras OK")
         return response.choices[0].message.content
     except Exception as e:
-        print(f"[Cerebras failed] {e} → all providers exhausted")
+        print(f"[LLM:{label}] Cerebras failed: {e}")
 
-    # ❌ All failed
-    return json.dumps({
-        "reply": "Abhi service temporarily unavailable hai. Thodi der mein dobara try karein.",
-        "department": None, "sub_specialty": None,
-        "is_emergency": False, "doctor_query": None, "intent": "general"
-    })
+    return ""
 
-# ── REQUEST MODEL ─────────────────────────────────────────────
+
+async def call_llm_async(
+    system_prompt: str, messages: list, max_tokens: int = 512, label: str = ""
+) -> str:
+    """Async wrapper — runs LLM call in thread pool."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None, call_llm, system_prompt, messages, max_tokens, label
+    )
+
+
+# ══════════════════════════════════════════════════════════════
+# REQUEST MODEL
+# ══════════════════════════════════════════════════════════════
+
 class ChatRequest(BaseModel):
-    message: str
-    history: list = []
+    message:            str
+    history:            list = []
+    # v8 conversation state — frontend tracks and sends back each turn
+    confirmed_symptoms: list = []
+    denied_symptoms:    list = []
+    follow_up_count:    int  = 0
+    session_id:         str  = ""
 
 
-# ── CHAT ENDPOINT ─────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+# DOCTOR FETCH HELPER
+# ══════════════════════════════════════════════════════════════
+
+def fetch_doctors_for_dept(department: str, raw_message: str) -> list:
+    """
+    Fetch and sort doctors for a department.
+    Condition-match first, falls back to full dept list.
+    JPNATC always last.
+    """
+    if not department or department == "Casualty / Emergency":
+        return []
+    all_matches = search_by_condition(raw_message, preferred_dept=department)
+    if all_matches:
+        matched = [m["doctor"] for m in all_matches[:10]]
+        return _sort_jpnatc_last(matched)
+    all_docs = DOCTOR_DATA.get(department, [])
+    return _sort_jpnatc_last(all_docs)
+
+
+# ══════════════════════════════════════════════════════════════
+# /chat ENDPOINT — v8 PIPELINE
+# ══════════════════════════════════════════════════════════════
+
 @app.post("/chat")
 async def chat(request: ChatRequest):
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    for item in request.history:
-        messages.append({"role": item["role"], "content": item["content"]})
-    messages.append({"role": "user", "content": request.message})
+    raw_message        = request.message
+    history            = request.history
+    confirmed_symptoms = request.confirmed_symptoms or []
+    denied_symptoms    = request.denied_symptoms    or []
+    follow_up_count    = request.follow_up_count    or 0
+    session_id         = request.session_id         or ""
 
-    raw = call_llm(messages)
+    # ── STEP 1: PII Scrub ─────────────────────────────────────
+    sanitized = sanitize_input(raw_message)
+    if was_sanitized(raw_message, sanitized):
+        print("[PII] Input scrubbed")
 
-    try:
-        parsed       = json.loads(raw)
-        reply        = parsed.get("reply", "")
-        department   = parsed.get("department")
-        sub_spec     = parsed.get("sub_specialty")
-        is_emergency = parsed.get("is_emergency", False)
-        doctor_query = parsed.get("doctor_query")
-        intent       = parsed.get("intent", "general")
-        if department and intent in ("find_department", "general"):
-            department = verify_department(department, request.message)
-    except json.JSONDecodeError:
-        reply        = "System error. Kripya dobara try karein."
-        department   = None
-        sub_spec     = None
-        is_emergency = False
-        doctor_query = None
-        intent       = "general"
+    # ── STEP 2: Parallel — keyword_scan + LLM 1 ──────────────
+    extractor_messages = build_extractor_messages(sanitized, history)
 
-    doctor_results    = []
-    ambiguous         = False
-    dept_doctors      = []
-    condition_matches = []
-    todays_doctors    = []
+    raw_flags_task = asyncio.get_event_loop().run_in_executor(
+        None, keyword_scan, sanitized
+    )
+    llm1_task = call_llm_async(
+        system_prompt = EXTRACTOR_SYSTEM_PROMPT,
+        messages      = extractor_messages,
+        max_tokens    = 400,
+        label         = "LLM1"
+    )
 
-    # ── INTENT: DOCTOR SCHEDULE ───────────────────────────────
-    if intent == "doctor_schedule" or doctor_query:
-        matches = search_doctor_by_name(doctor_query, hint_dept=department)
+    raw_flags_result, llm1_raw = await asyncio.gather(raw_flags_task, llm1_task)
+
+    raw_flags = raw_flags_result
+    features  = parse_extractor_response(llm1_raw)
+
+    print(f"[Engine] primary={features.get('primary_complaint')} "
+          f"flags={[k for k, v in raw_flags.items() if v]}")
+
+    # ── STEP 3 + 4: Engine ───────────────────────────────────
+    engine_output = run_engine(features, raw_flags)
+
+    print(f"[Engine] emergency={engine_output['is_emergency']} "
+          f"selfcare={engine_output['is_selfcare']} "
+          f"severity={engine_output['severity']} "
+          f"top3={[d['dept'].split('(')[0].strip() for d in engine_output['top3']]} "
+          f"gap={engine_output['confidence_gap']}%")
+
+    # ── STEP 5: LLM 2 — clinical routing ─────────────────────
+    clinical_messages = build_clinical_messages(
+        features           = features,
+        engine_output      = engine_output,
+        history            = history,
+        confirmed_symptoms = confirmed_symptoms,
+        denied_symptoms    = denied_symptoms,
+        follow_up_count    = follow_up_count,
+    )
+
+    llm2_raw = await call_llm_async(
+        system_prompt = CLINICAL_SYSTEM_PROMPT,
+        messages      = clinical_messages,
+        max_tokens    = 512,
+        label         = "LLM2"
+    )
+
+    clinical = parse_clinical_response(llm2_raw)
+
+    # ── STEP 5b: Safety override — engine emergency wins ──────
+    # Python emergency is hardcoded — LLM 2 can NEVER undo it
+    if engine_output["is_emergency"] and clinical.get("final_dept") != "Casualty / Emergency":
+        print("[Safety] Engine emergency overrides LLM 2")
+        clinical["final_dept"]       = "Casualty / Emergency"
+        clinical["severity"]         = "emergency"
+        clinical["confidence"]       = 100
+        clinical["follow_up_needed"] = False
+        clinical["reply"]            = "Kripya TURANT Casualty / Emergency jaayein! Yeh emergency hai. Deri mat karein."
+        clinical["action_advice"]    = "TURANT Casualty jaayein — deri bilkul mat karein!"
+
+    print(f"[LLM2] dept={clinical.get('final_dept')} "
+          f"severity={clinical.get('severity')} "
+          f"confidence={clinical.get('confidence')} "
+          f"python_correct={clinical.get('python_correct')} "
+          f"follow_up={clinical.get('follow_up_needed')}")
+
+    # ── STEP 6: Doctor fetch ──────────────────────────────────
+    final_dept       = clinical.get("final_dept")
+    is_emergency     = engine_output["is_emergency"] or (clinical.get("severity") == "emergency")
+    is_selfcare      = engine_output["is_selfcare"]
+    referral_required = (
+        clinical.get("referral_required", False) or
+        (final_dept in REFERRAL_REQUIRED_DEPTS)
+    )
+
+    context_flags = features.get("context_flags", {})
+    needs_doctor  = context_flags.get("needs_doctor_name", False)
+    is_browse     = context_flags.get("is_browse_request", False)
+
+    doctor_results = []
+    dept_doctors   = []
+    ambiguous      = False
+
+    if needs_doctor:
+        # Extract doctor name from sanitized input
+        name_match = re.search(
+            r'\bdr\.?\s+([a-z][a-z\s]{2,30}?)(?:\s+ka|\s+ke|\s+ki|\s+kab|\s+ka\s|\?|$)',
+            sanitized.lower()
+        )
+        doctor_query = name_match.group(1).strip() if name_match else sanitized
+        matches = search_doctor_by_name(doctor_query, hint_dept=final_dept)
         if matches:
             doctor_results = [{"dept": m["dept"], "doctor": m["doctor"]} for m in matches]
-            unique_names = set(m["doctor"]["name"] for m in matches)
-            ambiguous = len(unique_names) > 1 and len(doctor_query.split()) <= 1
+            unique_names   = set(m["doctor"]["name"] for m in matches)
+            ambiguous      = len(unique_names) > 1 and len(doctor_query.split()) <= 1
 
-    # ── INTENT: BROWSE DEPARTMENT ─────────────────────────────
-    elif intent == "browse_department" and department:
-        all_docs = DOCTOR_DATA.get(department, [])
-        def is_jpnatc(d): return (d.get("center", "") or "").upper() == "JPNATC"
-        todays_main  = [d for d in all_docs if is_available_today(d.get("opd_days", "")) and not is_jpnatc(d)]
-        others_main  = [d for d in all_docs if not is_available_today(d.get("opd_days", "")) and not is_jpnatc(d)]
-        jpnatc_docs  = [d for d in all_docs if is_jpnatc(d)]
+    elif is_browse and final_dept:
+        all_docs = DOCTOR_DATA.get(final_dept, [])
+        def _is_jpnatc(d): return (d.get("center", "") or "").upper() == "JPNATC"
+        todays_main  = [d for d in all_docs if is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
+        others_main  = [d for d in all_docs if not is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
+        jpnatc_docs  = [d for d in all_docs if _is_jpnatc(d)]
         dept_doctors = todays_main + others_main + jpnatc_docs
 
-    # ── INTENT: FIND DEPARTMENT (symptom-based) ───────────────
-    elif intent == "find_department" and department:
-        search_query = (sub_spec or "") + " " + request.message
-        all_matches  = search_by_condition(search_query, preferred_dept=department)
-        if all_matches:
-            non_jpnatc = [m["doctor"] for m in all_matches[:10] if (m["doctor"].get("center","") or "").upper() != "JPNATC"]
-            jpnatc     = [m["doctor"] for m in all_matches[:10] if (m["doctor"].get("center","") or "").upper() == "JPNATC"]
-            dept_doctors = non_jpnatc + jpnatc
-        else:
-            all_docs = DOCTOR_DATA.get(department, [])
-            dept_doctors = [d for d in all_docs if (d.get("center","") or "").upper() != "JPNATC"] + \
-                           [d for d in all_docs if (d.get("center","") or "").upper() == "JPNATC"]
+    elif is_emergency or is_selfcare:
+        dept_doctors = []   # No doctor cards for emergency or self-care
 
-    # ── INTENT: EMERGENCY ─────────────────────────────────────
-    elif intent == "emergency" or is_emergency:
-        is_emergency = True
-        department   = "Casualty / Emergency"
+    elif final_dept:
+        dept_doctors = fetch_doctors_for_dept(final_dept, sanitized)
 
-    # ── FALLBACK ──────────────────────────────────────────────
-    elif department and not doctor_query:
-        search_query = (sub_spec or "") + " " + request.message
-        all_matches  = search_by_condition(search_query, preferred_dept=department)
-        if all_matches:
-            non_jpnatc = [m["doctor"] for m in all_matches[:10] if (m["doctor"].get("center","") or "").upper() != "JPNATC"]
-            jpnatc     = [m["doctor"] for m in all_matches[:10] if (m["doctor"].get("center","") or "").upper() == "JPNATC"]
-            dept_doctors = non_jpnatc + jpnatc
-        else:
-            all_docs = DOCTOR_DATA.get(department, [])
-            dept_doctors = [d for d in all_docs if (d.get("center","") or "").upper() != "JPNATC"] + \
-                           [d for d in all_docs if (d.get("center","") or "").upper() == "JPNATC"]
+    # ── STEP 7: Async ambiguity log ───────────────────────────
+    asyncio.create_task(log_if_ambiguous(
+        sanitized_input    = sanitized,
+        features           = features,
+        engine_output      = engine_output,
+        clinical_output    = clinical,
+        confirmed_symptoms = confirmed_symptoms,
+        denied_symptoms    = denied_symptoms,
+        follow_up_count    = follow_up_count,
+        session_id         = session_id or None,
+    ))
+
+    # ── RESPONSE ──────────────────────────────────────────────
+    new_follow_up_count = follow_up_count + (1 if clinical.get("follow_up_needed") else 0)
 
     return {
-        "reply": reply,
-        "department": department,
-        "sub_specialty": sub_spec,
-        "is_emergency": is_emergency,
-        "doctor_query": doctor_query,
+        # Core reply
+        "reply":          clinical.get("reply", ""),
+        "disclaimer":     clinical.get("disclaimer", "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge."),
+        "department":     final_dept,
+        "severity":       clinical.get("severity", "routine"),
+        "action_advice":  clinical.get("action_advice"),
+        "reason":         clinical.get("reason"),
+
+        # Follow-up state — frontend must track and send back next turn
+        "follow_up_needed":   clinical.get("follow_up_needed", False),
+        "follow_up_question": clinical.get("follow_up_question"),
+        "follow_up_count":    new_follow_up_count,
+
+        # Flags
+        "is_emergency":     is_emergency,
+        "is_selfcare":      is_selfcare,
+        "referral_required": referral_required,
+
+        # Doctors
+        "doctors":        dept_doctors,
         "doctor_results": doctor_results,
-        "doctors": dept_doctors,
-        "condition_matches": condition_matches,
-        "ambiguous": ambiguous,
-        "intent": intent,
-        "today": TODAY_NAME,
+        "ambiguous":      ambiguous,
+
+        # Debug (remove in prod if needed)
+        "debug": {
+            "python_top3":    engine_output.get("top3"),
+            "confidence_gap": engine_output.get("confidence_gap"),
+            "llm_confidence": clinical.get("confidence"),
+            "python_correct": clinical.get("python_correct"),
+            "pii_scrubbed":   was_sanitized(raw_message, sanitized),
+        },
+
+        # Legacy fields for frontend compatibility
+        "today":  TODAY_NAME,
+        "intent": (
+            "emergency"         if is_emergency else
+            "selfcare"          if is_selfcare  else
+            "doctor_schedule"   if needs_doctor else
+            "browse_department" if is_browse    else
+            "find_department"   if final_dept   else
+            "general"
+        ),
     }
 
 
-# ── BROWSE DEPT ENDPOINT ──────────────────────────────────────
+# ══════════════════════════════════════════════════════════════
+# ALL OTHER ENDPOINTS — UNCHANGED FROM v1
+# ══════════════════════════════════════════════════════════════
+
 @app.get("/browse-department")
 def browse_department(department: str = Query(...)):
     all_docs = DOCTOR_DATA.get(department, [])
@@ -363,31 +457,25 @@ def browse_department(department: str = Query(...)):
     others = [d for d in all_docs if not is_available_today(d.get("opd_days", ""))]
     return {
         "department": department,
-        "today": todays,
-        "others": others,
+        "today":      todays,
+        "others":     others,
         "today_name": TODAY_NAME,
     }
 
 
-# ── TODAY'S DOCTORS ENDPOINT ──────────────────────────────────
 @app.get("/todays-doctors")
 def todays_doctors(department: str = Query(None)):
     results = get_todays_doctors(department)
-    return {
-        "today": TODAY_NAME,
-        "count": len(results),
-        "doctors": results
-    }
+    return {"today": TODAY_NAME, "count": len(results), "doctors": results}
 
 
-# ── DEPARTMENTS LIST ──────────────────────────────────────────
 @app.get("/departments")
 def get_departments():
     return {
         "departments": [
             {
-                "name": dept,
-                "doctor_count": len(docs),
+                "name":            dept,
+                "doctor_count":    len(docs),
                 "available_today": sum(1 for d in docs if is_available_today(d.get("opd_days", "")))
             }
             for dept, docs in DOCTOR_DATA.items()
@@ -404,10 +492,10 @@ def get_doctors(department: str = Query(...), sub_specialty: str = Query(None)):
 @app.get("/")
 def home():
     return {
-        "status": "Sahayak backend is running!",
-        "today": TODAY_NAME,
+        "status":            "Sahayak v8 is running!",
+        "today":             TODAY_NAME,
         "total_departments": len(DOCTOR_DATA),
-        "total_doctors": sum(len(v) for v in DOCTOR_DATA.values()),
+        "total_doctors":     sum(len(v) for v in DOCTOR_DATA.values()),
     }
 
 

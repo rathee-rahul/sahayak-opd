@@ -1,18 +1,19 @@
-# AIIMS OPD Department List
+# AIIMS OPD Department List — Sahayak v8
+# Updated to match doctor_data.json exactly
 
 DEPARTMENTS = [
     "Medicine (General)",
-    "Paediatrics (Children)",
+    "Paediatrics Medicine (Children)",
     "Surgery (General)",
     "Obstetrics & Gynaecology",
     "Orthopaedics (Bones & Joints)",
     "Dermatology & Venereology (Skin)",
-    "Otorhinolaryngology - ENT (Ear, Nose & Throat)",
+    "Otorhinolaryngology - ENT",
     "Psychiatry (Mental Health)",
     "Urology (Kidney & Urinary)",
     "Gastroenterology (Stomach & Digestion)",
     "G.I. Surgery (Stomach Surgery)",
-    "Nephrology (Kidney Disease)",
+    "Nephrology",
     "Endocrinology (Diabetes & Hormones)",
     "Geriatric Medicine (Elderly Care)",
     "Rheumatology (Joint & Autoimmune)",
@@ -27,5 +28,6 @@ DEPARTMENTS = [
     "Ophthalmology (Eyes)",
     "Dental Surgery",
     "Oncology (Cancer)",
-    "Casualty / Emergency"
+    "Casualty / Emergency",
+    "Pulmonary Medicine",
 ]
