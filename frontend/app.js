@@ -57,8 +57,8 @@ async function sendMessage(messageText) {
  
     const data = await res.json();
     removeTypingIndicator(typingEl);
-    // Reset intent after response — next message starts fresh unless tile clicked again
-    if (activeIntent === 'doctor_schedule' && data.intent !== 'doctor_schedule') activeIntent = null;
+    // Reset intent after every response — user must click a tile again to re-activate
+    if (data.intent && data.intent !== 'doctor_schedule') activeIntent = null;
  
     if (data.is_emergency) appendEmergencyAlert();
  
@@ -498,6 +498,7 @@ const DEPARTMENTS = [
 ];
 
 function showDeptPicker() {
+  activeIntent = null;  // clear doctor search mode when user opens dept picker
   const overlay = document.getElementById('deptPickerOverlay');
   const grid = document.getElementById('deptPickerGrid');
   grid.innerHTML = DEPARTMENTS.map((dept, i) => `
@@ -524,6 +525,7 @@ function closeDeptPicker(e) {
 
 function selectDepartment(dept) {
   document.getElementById('deptPickerOverlay').classList.remove('active');
+  activeIntent = null;  // clear any previous tile intent before browse
   const msg = dept + ' mein kaun se doctors hain?';
   document.getElementById('chatInput').value = msg;
   sendMessage(msg);
