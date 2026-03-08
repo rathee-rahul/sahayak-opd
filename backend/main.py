@@ -97,7 +97,8 @@ from departments import DEPARTMENTS
 def extract_browse_dept(message: str) -> str | None:
     """
     Extract department name from a browse query using fuzzy matching.
-    e.g. "Orthopaedics mein kaun se doctors hain?" → "Orthopaedics (Bones & Joints)"
+    e.g. "G.I. Surgery mein kaun se doctors hain?" → "G.I. Surgery (Stomach Surgery)"
+    Prefers longer/more-specific matches when scores are close.
     Returns best matching department or None.
     """
     msg_lower = message.lower()
@@ -108,10 +109,15 @@ def extract_browse_dept(message: str) -> str | None:
         short_name = dept.split("(")[0].strip().lower()
         full_name  = dept.lower()
         score = max(
-            fuzz.partial_ratio(msg_lower, full_name),
+            fuzz.token_set_ratio(msg_lower, full_name),
+            fuzz.token_set_ratio(msg_lower, short_name),
             fuzz.partial_ratio(msg_lower, short_name),
         )
-        if score > best_score:
+        # Tiebreak: prefer longer dept name (more specific)
+        # e.g. "G.I. Surgery" wins over "Surgery" at same score
+        if score > best_score or (
+            score == best_score and best_dept and len(dept) > len(best_dept)
+        ):
             best_score = score
             best_dept  = dept
 
