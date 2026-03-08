@@ -98,23 +98,49 @@ def extract_browse_dept(message: str) -> str | None:
     """
     Extract department name from a browse query using fuzzy matching.
     e.g. "G.I. Surgery mein kaun se doctors hain?" → "G.I. Surgery (Stomach Surgery)"
-    Prefers longer/more-specific matches when scores are close.
-    Returns best matching department or None.
+    e.g. "Pulmonary Medicine mein kaun se doctors hain?" → "Pulmonary Medicine"
+
+    Strategy:
+      Priority 1 — exact substring match of short_name in message (most reliable).
+                   Among ties, prefer the longer/more-specific department name.
+      Priority 2 — fuzzy scoring using partial_ratio on full + short name,
+                   and token_sort_ratio (NOT token_set_ratio — token_set ignores
+                   extra tokens, causing "medicine" to equally match both
+                   "Medicine (General)" and "Pulmonary Medicine").
+
+    Returns best matching department or None if score < 60.
     """
-    msg_lower = message.lower()
+    msg_lower  = message.lower()
     best_dept  = None
     best_score = 0
 
     for dept in DEPARTMENTS:
         short_name = dept.split("(")[0].strip().lower()
         full_name  = dept.lower()
+
+        # Priority 1 — exact substring: short_name found verbatim in message
+        # Score 200 so it always beats fuzzy matches.
+        # Among multiple substring matches, prefer the longer dept name
+        # e.g. "pulmonary medicine" wins over "medicine" when both substring-match.
+        if short_name in msg_lower:
+            sub_score = 200 + len(short_name)   # longer short_name = more specific
+            if sub_score > best_score:
+                best_score = sub_score
+                best_dept  = dept
+            elif sub_score == best_score and best_dept and len(dept) > len(best_dept):
+                best_dept = dept
+            continue
+
+        # Priority 2 — fuzzy (only runs when no substring match found yet, or score < 200)
+        if best_score >= 200:
+            continue    # an exact match already locked in — skip fuzzy entirely
+
         score = max(
-            fuzz.token_set_ratio(msg_lower, full_name),
-            fuzz.token_set_ratio(msg_lower, short_name),
+            fuzz.partial_ratio(msg_lower, full_name),   # rewards full-name overlap
             fuzz.partial_ratio(msg_lower, short_name),
+            fuzz.token_sort_ratio(msg_lower, short_name),  # token_sort, NOT token_set
         )
-        # Tiebreak: prefer longer dept name (more specific)
-        # e.g. "G.I. Surgery" wins over "Surgery" at same score
+
         if score > best_score or (
             score == best_score and best_dept and len(dept) > len(best_dept)
         ):

@@ -146,6 +146,12 @@ OUTPUT: {"primary_complaint":null,"associated_symptoms":[],"negations":[],"sever
 INPUT: "Orthopaedics mein kaun se doctors hain?"
 OUTPUT: {"primary_complaint":null,"associated_symptoms":[],"negations":[],"severity_hint":null,"onset":null,"duration":null,"age":null,"gender":null,"body_part":null,"context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":false,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":false,"is_browse_request":true,"is_emergency_self_declared":false}}
 
+INPUT: "Pulmonary Medicine mein kaun se doctors hain?"
+OUTPUT: {"primary_complaint":null,"associated_symptoms":[],"negations":[],"severity_hint":null,"onset":null,"duration":null,"age":null,"gender":null,"body_part":null,"context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":false,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":false,"is_browse_request":true,"is_emergency_self_declared":false}}
+
+INPUT: "Cardiology ke doctors dikhao"
+OUTPUT: {"primary_complaint":null,"associated_symptoms":[],"negations":[],"severity_hint":null,"onset":null,"duration":null,"age":null,"gender":null,"body_part":null,"context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":false,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":false,"is_browse_request":true,"is_emergency_self_declared":false}}
+
 INPUT: "Knee mein dard hai lekin bukhar aur chest pain bilkul nahi, 55 saal, male"
 OUTPUT: {"primary_complaint":"knee pain","associated_symptoms":[],"negations":["bukhar","chest pain"],"severity_hint":null,"onset":null,"duration":null,"age":55,"gender":"male","body_part":"ghutna","context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":false,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":false,"is_browse_request":false,"is_emergency_self_declared":false}}
 
