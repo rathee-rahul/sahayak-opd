@@ -134,12 +134,14 @@ def search_by_condition(query: str, preferred_dept: str = None) -> list:
 
 
 def search_doctor_by_name(query: str, hint_dept: str = None):
+    # FIX: lowered threshold 75 → 65 to handle partial names and Hinglish input
+    # e.g. "dr kamal" or "kamal" now matches "Dr. Kamal Singh"
     query = query.lower().strip()
     results = []
     for dept, doctors in DOCTOR_DATA.items():
         for doc in doctors:
             similarity = fuzz.partial_ratio(query, doc["name"].lower())
-            if similarity >= 75:
+            if similarity >= 65:
                 score = similarity + (10 if hint_dept and dept == hint_dept else 0)
                 results.append({"dept": dept, "doctor": doc, "score": score})
     results.sort(key=lambda x: -x["score"])
@@ -336,7 +338,7 @@ async def chat(request: ChatRequest):
     print(f"[LLM2] dept={clinical.get('final_dept')} "
           f"severity={clinical.get('severity')} "
           f"confidence={clinical.get('confidence')} "
-          f"python_correct={clinical.get('python_correct')} "
+          f"agree={clinical.get('agree')} "
           f"follow_up={clinical.get('follow_up_needed')}")
 
     # ── STEP 6: Doctor fetch ──────────────────────────────────
@@ -357,17 +359,15 @@ async def chat(request: ChatRequest):
     ambiguous      = False
 
     if needs_doctor:
-        # Extract doctor name from sanitized input
-        name_match = re.search(
-            r'\bdr\.?\s+([a-z][a-z\s]{2,30}?)(?:\s+ka|\s+ke|\s+ki|\s+kab|\s+ka\s|\?|$)',
-            sanitized.lower()
-        )
-        doctor_query = name_match.group(1).strip() if name_match else sanitized
-        matches = search_doctor_by_name(doctor_query, hint_dept=final_dept)
+        # FIX: Pass full sanitized input directly to fuzzy search.
+        # Old regex was capturing Hindi words ("dikhao", "batao") as part of
+        # the doctor name, causing fuzzy match to fail → empty results.
+        # fuzz.partial_ratio handles natural Hinglish input correctly.
+        matches = search_doctor_by_name(sanitized, hint_dept=final_dept)
         if matches:
             doctor_results = [{"dept": m["dept"], "doctor": m["doctor"]} for m in matches]
             unique_names   = set(m["doctor"]["name"] for m in matches)
-            ambiguous      = len(unique_names) > 1 and len(doctor_query.split()) <= 1
+            ambiguous      = len(unique_names) > 1
 
     elif is_browse and final_dept:
         all_docs = DOCTOR_DATA.get(final_dept, [])
@@ -427,7 +427,7 @@ async def chat(request: ChatRequest):
             "python_top3":    engine_output.get("top3"),
             "confidence_gap": engine_output.get("confidence_gap"),
             "llm_confidence": clinical.get("confidence"),
-            "python_correct": clinical.get("python_correct"),
+            "agree":          clinical.get("agree"),
             "pii_scrubbed":   was_sanitized(raw_message, sanitized),
         },
 

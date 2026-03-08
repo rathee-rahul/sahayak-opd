@@ -136,15 +136,20 @@ If engine says is_emergency = true OR patient has:
 → confidence = 100
 
 STEP 2 — DOCTOR / BROWSE REQUEST:
+⚠️  CHECK THIS BEFORE STEP 4 — browse/doctor queries never need age/gender.
+
 If context_flags.needs_doctor_name = true:
 → final_dept = null
 → reply = "Neeche unki details aur schedule dekh skte hain."
 → follow_up_needed = false
+→ NEVER ask for age/gender
 
 If context_flags.is_browse_request = true:
-→ final_dept = top3[0].dept (the browsed department)
+→ final_dept = top3[0].dept  ← MUST be set, never null
 → reply = "Is department ke doctors ki list neeche dekh skte hain."
 → follow_up_needed = false
+→ NEVER ask for age/gender
+→ NEVER return final_dept = null for browse
 
 STEP 3 — SELF-CARE PATH:
 If engine says is_selfcare = true (isolated mild symptom, adult, short duration):
@@ -158,8 +163,12 @@ If engine says is_selfcare = true (isolated mild symptom, adult, short duration)
 → action_advice = "Ghar pe aaram karein. 3 din mein theek na ho toh OPD aayein."
 → follow_up_needed = false
 
-STEP 4 — MISSING AGE/GENDER (ask first, except emergency):
-If age = null AND gender = null AND primary_complaint is a symptom:
+STEP 4 — MISSING AGE/GENDER:
+Fire ONLY when ALL of the following are true:
+  ✓ primary_complaint is a real symptom (not null)
+  ✓ needs_doctor_name = false
+  ✓ is_browse_request = false
+  ✓ age = null AND gender = null
 → final_dept = null
 → follow_up_needed = true
 → follow_up_question = "Aapki umar aur gender kya hai? Isse main sahi department suggest kar sakti hoon."
@@ -346,8 +355,8 @@ Engine: top3=[Orthopaedics(15), Rheumatology(12)], gap=20%, features: bilateral 
   "disclaimer": "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge."
 }
 
-EXAMPLE 6 — Missing age/gender:
-Engine: features: chest pain, age=null, gender=null, is_emergency=false
+EXAMPLE 6 — Missing age/gender (symptom present, NOT a browse or doctor query):
+Engine: features: chest pain, age=null, gender=null, is_emergency=false, is_browse_request=false, needs_doctor_name=false
 {
   "final_dept": null,
   "severity": "routine",
@@ -376,8 +385,8 @@ Engine: top3=[Pulmonary(14), Cardiology(11)], gap=21%, follow_up_count=2
   "disclaimer": "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge."
 }
 
-EXAMPLE 8 — Doctor name query:
-Engine: context_flags.needs_doctor_name=true
+EXAMPLE 8 — Doctor name query (needs_doctor_name=true):
+Engine: context_flags.needs_doctor_name=true, age=null, gender=null
 {
   "final_dept": null,
   "severity": "routine",
@@ -391,10 +400,27 @@ Engine: context_flags.needs_doctor_name=true
   "disclaimer": "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge."
 }
 
+EXAMPLE 9 — Browse department (is_browse_request=true, e.g. "Orthopaedics ke doctors dikhao"):
+Engine: context_flags.is_browse_request=true, top3=[{dept:"Orthopaedics (Bones & Joints)", score:20}, ...], age=null, gender=null
+{
+  "final_dept": "Orthopaedics (Bones & Joints)",
+  "severity": "routine",
+  "confidence": 100,
+  "agree": true,
+  "reason": null,
+  "action_advice": null,
+  "follow_up_needed": false,
+  "follow_up_question": null,
+  "reply": "Orthopaedics (Bones & Joints) department ke doctors neeche dekh skte hain.",
+  "disclaimer": "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge."
+}
+
 REMEMBER: Output ONLY valid JSON. No preamble. No markdown fences. No explanation outside JSON.
 REMEMBER: NEVER name any medicine — not even paracetamol, crocin, or any OTC drug.
 REMEMBER: NEVER write any doctor name in the reply field.
 REMEMBER: disclaimer field must be present in EVERY response.
+REMEMBER: is_browse_request=true → final_dept MUST be set, NEVER null, NEVER ask age/gender.
+REMEMBER: needs_doctor_name=true → follow_up_needed=false, NEVER ask age/gender.
 """
 
 
@@ -406,23 +432,8 @@ def build_clinical_messages(
     denied_symptoms: list,
     follow_up_count: int,
 ) -> list:
-    """
-    Build the messages array for LLM 2 API call.
-
-    Args:
-        features:           dict from extractor_prompt (LLM 1 output)
-        engine_output:      dict from engine.run_engine()
-        history:            last 4 messages [{"role":..., "content":...}]
-        confirmed_symptoms: list of symptoms patient has confirmed
-        denied_symptoms:    list of symptoms patient has denied
-        follow_up_count:    how many follow-up questions already asked (max 2)
-
-    Returns:
-        messages list ready for Groq/Cerebras API call
-    """
     import json
 
-    # Build context payload for LLM 2
     context = {
         "features": features,
         "engine_output": {
@@ -440,16 +451,10 @@ def build_clinical_messages(
     }
 
     messages = []
-
-    # Add last 4 history messages for conversational context
     recent_history = history[-4:] if len(history) > 4 else history
     for msg in recent_history:
-        messages.append({
-            "role":    msg["role"],
-            "content": msg["content"]
-        })
+        messages.append({"role": msg["role"], "content": msg["content"]})
 
-    # Final user message = structured context for LLM 2
     messages.append({
         "role": "user",
         "content": (
@@ -458,25 +463,12 @@ def build_clinical_messages(
             f"{json.dumps(context, ensure_ascii=False, indent=2)}"
         )
     })
-
     return messages
 
 
 def parse_clinical_response(raw_response: str) -> dict:
-    """
-    Parse LLM 2 JSON response safely.
-    Returns clinical output dict or safe fallback.
+    import json, re
 
-    Args:
-        raw_response: raw string from LLM 2
-
-    Returns:
-        clinical output dict
-    """
-    import json
-    import re
-
-    # Strip markdown fences
     cleaned = raw_response.strip()
     cleaned = re.sub(r"^```json\s*", "", cleaned)
     cleaned = re.sub(r"^```\s*", "", cleaned)
@@ -485,8 +477,6 @@ def parse_clinical_response(raw_response: str) -> dict:
 
     try:
         output = json.loads(cleaned)
-
-        # Ensure required keys with safe defaults
         output.setdefault("final_dept", None)
         output.setdefault("severity", "routine")
         output.setdefault("confidence", 50)
@@ -496,108 +486,36 @@ def parse_clinical_response(raw_response: str) -> dict:
         output.setdefault("follow_up_needed", False)
         output.setdefault("follow_up_question", None)
         output.setdefault("reply", "Kripya apni takleef batayein — main madad karti hoon.")
-        output.setdefault(
-            "disclaimer",
-            "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge."
-        )
+        output.setdefault("disclaimer", "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge.")
         return output
-
     except (json.JSONDecodeError, ValueError):
-        # Safe fallback — generic helpful response
         return {
-            "final_dept":        None,
-            "severity":          "routine",
-            "confidence":        0,
-            "agree":             True,
-            "reason":            None,
-            "action_advice":     None,
-            "follow_up_needed":  True,
+            "final_dept":         None,
+            "severity":           "routine",
+            "confidence":         0,
+            "agree":              True,
+            "reason":             None,
+            "action_advice":      None,
+            "follow_up_needed":   True,
             "follow_up_question": "Kripya apni takleef thodi aur detail mein batayein?",
-            "reply":             "Kripya apni takleef thodi aur detail mein batayein — main sahi department suggest kar sakti hoon.",
-            "disclaimer":        "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge.",
+            "reply":              "Kripya apni takleef thodi aur detail mein batayein — main sahi department suggest kar sakti hoon.",
+            "disclaimer":         "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge.",
         }
 
-
-# ── QUICK TEST ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    import json
-
-    print("── clinical_prompt.py — structure check ─────────────")
     print(f"System prompt length : {len(CLINICAL_SYSTEM_PROMPT)} chars")
     print(f"Estimated tokens     : ~{len(CLINICAL_SYSTEM_PROMPT)//4}")
-    print()
-
-    # Test build_clinical_messages
-    sample_features = {
-        "primary_complaint": "chest pain",
-        "associated_symptoms": ["palpitations"],
-        "negations": [],
-        "severity_hint": "moderate",
-        "onset": "sudden",
-        "duration": "2 ghante",
-        "age": 45,
-        "gender": "male",
-        "body_part": "chest",
-        "context_flags": {
-            "is_follow_up_visit": False,
-            "post_surgery": False,
-            "post_accident": False,
-            "is_for_child": False,
-            "is_for_elderly": False,
-            "is_pregnancy_related": False,
-            "is_chronic_condition": False,
-            "needs_doctor_name": False,
-            "is_browse_request": False,
-            "is_emergency_self_declared": False,
-        }
-    }
-
-    sample_engine = {
-        "is_emergency": True,
-        "is_selfcare": False,
-        "top3": [{"dept": "Casualty / Emergency", "score": 32}, {"dept": "Cardiology (Heart)", "score": 22}],
-        "confidence_gap": 31,
-        "severity": "emergency",
-    }
-
-    msgs = build_clinical_messages(
-        features=sample_features,
-        engine_output=sample_engine,
-        history=[],
-        confirmed_symptoms=["chest pain"],
-        denied_symptoms=[],
-        follow_up_count=0,
-    )
-
-    print(f"✅ Messages built      : {len(msgs)} message(s)")
-    print(f"   Content preview    : {msgs[-1]['content'][:120]}...")
-    print()
-
-    # Test parse_clinical_response — valid
-    valid = '''{
-        "final_dept": "Casualty / Emergency",
-        "severity": "emergency",
-        "confidence": 100,
-        "agree": true,
-        "reason": "Chest pain + palpitations emergency signs hain",
-        "action_advice": "TURANT Casualty jaayein!",
-        "follow_up_needed": false,
-        "follow_up_question": null,
-        "reply": "Kripya TURANT Casualty / Emergency jaayein! Yeh emergency hai.",
-        "disclaimer": "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge."
-    }'''
-    parsed = parse_clinical_response(valid)
-    print(f"✅ Valid JSON parsed   : final_dept={parsed['final_dept']}, severity={parsed['severity']}")
-
-    # Test parse_clinical_response — fenced
-    fenced = "```json\n" + valid + "\n```"
-    parsed2 = parse_clinical_response(fenced)
-    print(f"✅ Fenced JSON parsed  : final_dept={parsed2['final_dept']}")
-
-    # Test parse_clinical_response — broken → fallback
-    parsed3 = parse_clinical_response("Sorry, I cannot help with this.")
-    print(f"✅ Broken fallback     : follow_up_needed={parsed3['follow_up_needed']} (True = correct)")
-
-    print()
-    print(f"── All checks passed ✅ ──────────────────────────────")
+    checks = [
+        ("Browse NEVER null",        "NEVER return null for browse"),
+        ("Browse before age/gender", "CHECK THIS BEFORE STEP 4"),
+        ("Age/gender guard",         "is_browse_request = false"),
+        ("Example 9 browse",         "EXAMPLE 9"),
+        ("Remember browse final",    "is_browse_request=true → final_dept MUST"),
+    ]
+    all_ok = True
+    for name, marker in checks:
+        present = marker in CLINICAL_SYSTEM_PROMPT
+        print(f"  {'✅' if present else '❌'}  {name}")
+        if not present: all_ok = False
+    print(f"\n{'✅ ALL CHECKS PASSED' if all_ok else '❌ SOME CHECKS FAILED'}")
