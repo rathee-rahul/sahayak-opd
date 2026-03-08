@@ -39,9 +39,11 @@ async function sendMessage(messageText) {
  
   try {
     // If user is in doctor-search mode, ensure backend treats input as a name query.
-  // Prepend 'Dr.' only when input has no prefix and active tile is doctor_schedule.
+  // Prepend 'Dr.' only for plain name inputs — not for resolved disambiguation
+  // messages (which contain a comma) and not if prefix already present.
   let messageToSend = text;
-  if (activeIntent === 'doctor_schedule' && !text.toLowerCase().startsWith('dr')) {
+  const isResolvedDisambig = text.includes(',');  // e.g. 'Dr. Rahul Yadav, Dental Surgery'
+  if (activeIntent === 'doctor_schedule' && !text.toLowerCase().startsWith('dr') && !isResolvedDisambig) {
     messageToSend = 'Dr. ' + text;
   }
 
@@ -146,6 +148,7 @@ function renderAmbiguousResults(query, results, containerEl) {
 function resolveDoctor(index, encodedResults) {
   const results = JSON.parse(decodeURIComponent(encodedResults));
   const chosen  = results[index];
+  activeIntent = 'doctor_schedule';  // keep intent so backend routes as doctor search
   sendMessage(`${chosen.doctor.name}, ${chosen.dept}`);
 }
  
