@@ -98,49 +98,23 @@ def extract_browse_dept(message: str) -> str | None:
     """
     Extract department name from a browse query using fuzzy matching.
     e.g. "G.I. Surgery mein kaun se doctors hain?" → "G.I. Surgery (Stomach Surgery)"
-    e.g. "Pulmonary Medicine mein kaun se doctors hain?" → "Pulmonary Medicine"
-
-    Strategy:
-      Priority 1 — exact substring match of short_name in message (most reliable).
-                   Among ties, prefer the longer/more-specific department name.
-      Priority 2 — fuzzy scoring using partial_ratio on full + short name,
-                   and token_sort_ratio (NOT token_set_ratio — token_set ignores
-                   extra tokens, causing "medicine" to equally match both
-                   "Medicine (General)" and "Pulmonary Medicine").
-
-    Returns best matching department or None if score < 60.
+    Prefers longer/more-specific matches when scores are close.
+    Returns best matching department or None.
     """
-    msg_lower  = message.lower()
+    msg_lower = message.lower()
     best_dept  = None
     best_score = 0
 
     for dept in DEPARTMENTS:
         short_name = dept.split("(")[0].strip().lower()
         full_name  = dept.lower()
-
-        # Priority 1 — exact substring: short_name found verbatim in message
-        # Score 200 so it always beats fuzzy matches.
-        # Among multiple substring matches, prefer the longer dept name
-        # e.g. "pulmonary medicine" wins over "medicine" when both substring-match.
-        if short_name in msg_lower:
-            sub_score = 200 + len(short_name)   # longer short_name = more specific
-            if sub_score > best_score:
-                best_score = sub_score
-                best_dept  = dept
-            elif sub_score == best_score and best_dept and len(dept) > len(best_dept):
-                best_dept = dept
-            continue
-
-        # Priority 2 — fuzzy (only runs when no substring match found yet, or score < 200)
-        if best_score >= 200:
-            continue    # an exact match already locked in — skip fuzzy entirely
-
         score = max(
-            fuzz.partial_ratio(msg_lower, full_name),   # rewards full-name overlap
+            fuzz.token_set_ratio(msg_lower, full_name),
+            fuzz.token_set_ratio(msg_lower, short_name),
             fuzz.partial_ratio(msg_lower, short_name),
-            fuzz.token_sort_ratio(msg_lower, short_name),  # token_sort, NOT token_set
         )
-
+        # Tiebreak: prefer longer dept name (more specific)
+        # e.g. "G.I. Surgery" wins over "Surgery" at same score
         if score > best_score or (
             score == best_score and best_dept and len(dept) > len(best_dept)
         ):
@@ -197,10 +171,17 @@ def search_by_condition(query: str, preferred_dept: str = None) -> list:
 def search_doctor_by_name(query: str, hint_dept: str = None):
     query = query.lower().strip()
     results = []
+    # Lower threshold for short queries (typos like 'kmal' for 'kamal').
+    # Short inputs need token_set_ratio which handles missing/extra chars better.
+    threshold = 60 if len(query) <= 5 else 75
     for dept, doctors in DOCTOR_DATA.items():
         for doc in doctors:
-            similarity = fuzz.partial_ratio(query, doc["name"].lower())
-            if similarity >= 75:
+            name_lower = doc["name"].lower()
+            similarity = max(
+                fuzz.partial_ratio(query, name_lower),
+                fuzz.token_set_ratio(query, name_lower),
+            )
+            if similarity >= threshold:
                 score = similarity + (10 if hint_dept and dept == hint_dept else 0)
                 results.append({"dept": dept, "doctor": doc, "score": score})
     results.sort(key=lambda x: -x["score"])
@@ -293,6 +274,7 @@ class ChatRequest(BaseModel):
     denied_symptoms:    list = []
     follow_up_count:    int  = 0
     session_id:         str  = ""
+    active_intent:      str  = ""   # frontend tile hint: 'doctor_schedule' | 'browse_department' | ''
 
 
 # ══════════════════════════════════════════════════════════════
@@ -328,6 +310,7 @@ async def chat(request: ChatRequest):
     denied_symptoms    = request.denied_symptoms    or []
     follow_up_count    = request.follow_up_count    or 0
     session_id         = request.session_id         or ""
+    active_intent      = (request.active_intent     or "").strip()
 
     # ── STEP 1: PII Scrub ─────────────────────────────────────
     sanitized = sanitize_input(raw_message)
@@ -413,14 +396,41 @@ async def chat(request: ChatRequest):
     needs_doctor  = context_flags.get("needs_doctor_name", False)
     is_browse     = context_flags.get("is_browse_request", False)
 
+    # ── FRONTEND TILE OVERRIDE ────────────────────────────────────
+    # If the frontend signals the user is in doctor-search mode,
+    # trust that over the LLM extractor (which may misread short/typo inputs).
+    if active_intent == "doctor_schedule":
+        needs_doctor = True
+        is_browse    = False
+    elif active_intent == "browse_department":
+        is_browse    = True
+        needs_doctor = False
+
     # ── BROWSE OVERRIDE — Python wins over LLM for dept detection ──
     # LLM often routes browse queries to wrong dept via symptom scoring.
     # Extract dept directly from message using fuzzy match.
     if is_browse:
         python_browse_dept = extract_browse_dept(sanitized)
         if python_browse_dept:
+            old_dept   = final_dept
             final_dept = python_browse_dept
-            print(f"[Browse] Python extracted dept: {final_dept}")
+            # If Python corrected the dept, also patch the reply text so the
+            # chat bubble matches the doctor card (fixes 'Medicine (General)'
+            # appearing in reply while the correct dept card is shown).
+            if old_dept != final_dept:
+                reply_text = clinical.get("reply", "")
+                if old_dept and old_dept in reply_text:
+                    clinical["reply"] = reply_text.replace(old_dept, final_dept)
+                else:
+                    short = final_dept.split("(")[0].strip()
+                    clinical["reply"] = (
+                        f"Aapne {short} ke liye browse kiya hai. "
+                        f"Is department ke doctors ki list neeche dekh skte hain. "
+                        f"OPD mein appointment lijiye."
+                    )
+                print(f"[Browse] Python overrode dept: {old_dept!r} -> {final_dept!r}")
+            else:
+                print(f"[Browse] Python confirmed dept: {final_dept}")
 
     doctor_results = []
     dept_doctors   = []

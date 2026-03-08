@@ -5,6 +5,7 @@ const BACKEND_URL = "https://sahayak-opd.onrender.com/chat";
 let conversationHistory = [];
 let isRecording = false;
 let recognition = null;
+let activeIntent = null;   // tracks which tile the user activated
  
 // ─── TODAY DETECTION ──────────────────────────────────────────────────────────
 const TODAY_NAME = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()];
@@ -37,14 +38,27 @@ async function sendMessage(messageText) {
   const typingEl = showTypingIndicator();
  
   try {
-    const res = await fetch(BACKEND_URL, {
+    // If user is in doctor-search mode, ensure backend treats input as a name query.
+  // Prepend 'Dr.' only when input has no prefix and active tile is doctor_schedule.
+  let messageToSend = text;
+  if (activeIntent === 'doctor_schedule' && !text.toLowerCase().startsWith('dr')) {
+    messageToSend = 'Dr. ' + text;
+  }
+
+  const res = await fetch(BACKEND_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text, history: conversationHistory.slice(-10) }),
+      body: JSON.stringify({
+        message: messageToSend,
+        history: conversationHistory.slice(-10),
+        active_intent: activeIntent,
+      }),
     });
  
     const data = await res.json();
     removeTypingIndicator(typingEl);
+    // Reset intent after response — next message starts fresh unless tile clicked again
+    if (activeIntent === 'doctor_schedule' && data.intent !== 'doctor_schedule') activeIntent = null;
  
     if (data.is_emergency) appendEmergencyAlert();
  
@@ -459,6 +473,7 @@ function startSymptomFlow() {
 
 // ── TILE 2: Doctor Search ─────────────────────────────────────
 function startDoctorSearch() {
+  activeIntent = 'doctor_schedule';
   appendMessage('bot', '<span class="hi">डॉक्टर का नाम लिखें — जैसे "Dr. Anita Dhar" या "Dr. Sharma"</span><span class="en">Type the doctor name to find their OPD schedule.</span>');
   const input = document.getElementById('chatInput');
   input.placeholder = 'डॉक्टर का नाम लिखें… · Type doctor name…';
