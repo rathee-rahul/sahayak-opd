@@ -435,6 +435,7 @@ async def chat(request: ChatRequest):
     doctor_results = []
     dept_doctors   = []
     ambiguous      = False
+    doctor_query   = None
 
     if needs_doctor:
         # Extract doctor name from sanitized input
@@ -500,6 +501,7 @@ async def chat(request: ChatRequest):
         # Doctors
         "doctors":        dept_doctors,
         "doctor_results": doctor_results,
+        "doctor_query":   doctor_query if needs_doctor else None,
         "ambiguous":      ambiguous,
 
         # Debug (remove in prod if needed)
