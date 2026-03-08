@@ -51,7 +51,7 @@ async function sendMessage(messageText) {
       body: JSON.stringify({
         message: messageToSend,
         history: conversationHistory.slice(-10),
-        active_intent: activeIntent,
+        active_intent: activeIntent || "",
       }),
     });
  

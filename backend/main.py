@@ -274,7 +274,7 @@ class ChatRequest(BaseModel):
     denied_symptoms:    list = []
     follow_up_count:    int  = 0
     session_id:         str  = ""
-    active_intent:      str  = ""   # frontend tile hint: 'doctor_schedule' | 'browse_department' | ''
+    active_intent:      str | None = ""  # frontend tile hint: 'doctor_schedule' | 'browse_department' | ''
 
 
 # ══════════════════════════════════════════════════════════════
