@@ -391,22 +391,58 @@ async def chat(request: ChatRequest):
     doctor_query   = None
 
     if needs_doctor:
-        # ── BUG D FIX: added ,| to regex so "Dr. X, Dept" also matches ──
-        name_match = re.search(
-            r'\bdr\.?\s+([a-z][a-z\s]{2,30}?)(?:\s+ka|\s+ke|\s+ki|\s+kab|\s+ka\s|,|\?|$)',
-            sanitized.lower()
+        text_lower = sanitized.lower()
+
+        # ── NAME EXTRACTION ───────────────────────────────────
+        # Handles English: "Dr. Sharma", "Dr Anita Dhar ka schedule"
+        # Handles Hindi:   "डॉक्टर कमल कटारिया की ओपीडी", "डॉ संजय वाधवा"
+        name_match = (
+            # English Dr. prefix
+            re.search(
+                r'\bdr\.?\s+([a-z][a-z\s]{1,30}?)(?:\s+ka|\s+ke|\s+ki|\s+kab|\s+ka\s|,|\?|$)',
+                text_lower
+            ) or
+            # English "doctor" prefix (without Dr.)
+            re.search(
+                r'\bdoctor\s+([a-z][a-z\s]{1,30}?)(?:\s+ka|\s+ke|\s+ki|\s+kab|\s+opd|\s+ka\s|,|\?|$)',
+                text_lower
+            ) or
+            # Hindi डॉक्टर prefix — capture words after it, stop at ki/ka/ke/kab
+            re.search(
+                r'(?:डॉक्टर|डॉ\.?)\s+([\u0900-\u097F\s]{2,40}?)(?:\s+की|\s+का|\s+के|\s+कब|$)',
+                sanitized
+            )
         )
-        doctor_query = name_match.group(1).strip() if name_match else sanitized
+
+        if name_match:
+            doctor_query = name_match.group(1).strip()
+        else:
+            # Last resort: strip common filler words and use what's left
+            filler = re.compile(
+                r'(mujhe|batao|bataiye|bataen|dikhao|ka schedule|ki opd|ke bare mein|'
+                r'opd kab|kab lagti|schedule kya|search karo|dhundho|find karo|'
+                r'की ओपीडी|के बारे में|का शेड्यूल|ओपीडी कब|कब लगती)',
+                re.IGNORECASE
+            )
+            doctor_query = filler.sub("", sanitized).strip(" ?।,")
+            # If still too long (>40 chars) it's probably not a name — use sanitized as-is
+            if len(doctor_query) > 40:
+                doctor_query = sanitized
+
+        doctor_query = doctor_query.strip()
+        print(f"[Doctor] Extracted query: '{doctor_query}'")
+
         matches = search_doctor_by_name(doctor_query, hint_dept=final_dept)
         if matches:
             doctor_results = [{"dept": m["dept"], "doctor": m["doctor"]} for m in matches]
             unique_names   = set(m["doctor"]["name"] for m in matches)
             ambiguous      = len(unique_names) > 1 and len(doctor_query.split()) <= 1
         else:
-            # Doctor not found — override reply so user knows to try again
+            # Doctor not found — show clean name in error, not full sentence
+            display_name = doctor_query.title() if len(doctor_query) <= 40 else "Yeh"
             clinical["reply"] = (
-                f"\"{ doctor_query.title() }\" naam ke doctor AIIMS OPD database mein nahi mile. "
-                "Kripya poora naam likhein — jaise \"Dr. Anita Dhar\" ya \"Dr. Sharma\"."
+                f"\"{display_name}\" naam ke doctor AIIMS OPD database mein nahi mile. "
+                "Kripya sirf doctor ka naam likhein — jaise \"Dr. Anita Dhar\" ya \"Dr. Sharma\"."
             )
             print(f"[Doctor] Not found: {doctor_query}")
 
