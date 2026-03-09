@@ -421,6 +421,16 @@ SCORING_RULES: List[Tuple[str, str, int]] = [
     ("cannot stand",                "Orthopaedics (Bones & Joints)",             7),
     ("leg pain",                    "Orthopaedics (Bones & Joints)",             5),
     ("limping",                     "Orthopaedics (Bones & Joints)",             5),
+    # SI joint / sacroiliac — ortho first, rheumatology only if autoimmune confirmed
+    ("si joint",                    "Orthopaedics (Bones & Joints)",            12),  # beats ankylosing alone
+    ("sacroiliac",                  "Orthopaedics (Bones & Joints)",            10),
+    ("sacral pain",                 "Orthopaedics (Bones & Joints)",            10),
+    ("pelvic pain",                 "Orthopaedics (Bones & Joints)",             7),
+    ("lower back joint",            "Orthopaedics (Bones & Joints)",             7),
+    ("tailbone",                    "Orthopaedics (Bones & Joints)",             7),
+    ("coccyx",                      "Orthopaedics (Bones & Joints)",            10),
+    ("lumbar",                      "Orthopaedics (Bones & Joints)",             7),
+    ("lumbosacral",                 "Orthopaedics (Bones & Joints)",            10),
 
     # RHEUMATOLOGY
     ("rheumatoid",                  "Rheumatology (Joint & Autoimmune)",        10),
@@ -428,7 +438,8 @@ SCORING_RULES: List[Tuple[str, str, int]] = [
     ("autoimmune",                  "Rheumatology (Joint & Autoimmune)",        10),
     ("gout",                        "Rheumatology (Joint & Autoimmune)",        10),
     ("uric acid",                   "Rheumatology (Joint & Autoimmune)",        10),
-    ("ankylosing",                  "Rheumatology (Joint & Autoimmune)",        10),
+    ("ankylosing spondylitis",      "Rheumatology (Joint & Autoimmune)",        10),
+    ("ankylosing",                  "Rheumatology (Joint & Autoimmune)",         7),  # reduced — SI joint pain overrides
     ("joint swelling",              "Rheumatology (Joint & Autoimmune)",         7),
     ("joint pain",                  "Rheumatology (Joint & Autoimmune)",         5),
     ("multi-joint",                 "Rheumatology (Joint & Autoimmune)",         7),
@@ -751,6 +762,9 @@ SCORING_RULES: List[Tuple[str, str, int]] = [
     ("persistent lump",             "Oncology (Cancer)",                        10),
     ("unexplained lump",            "Oncology (Cancer)",                        10),
     ("lump in body",                "Oncology (Cancer)",                        10),
+    ("ganth",                       "Oncology (Cancer)",                         7),  # Hindi = lump/swelling
+    ("lamp in",                     "Oncology (Cancer)",                         7),  # voice mishear of lump
+    ("ghaav",                       "Surgery (General)",                         5),  # Hindi = wound/sore
     ("solid tumour",                "Oncology (Cancer)",                        10),
     ("mass on xray",                "Oncology (Cancer)",                        10),
     ("coughing up blood",           "Oncology (Cancer)",                        10),
@@ -927,8 +941,18 @@ SCORING_RULES: List[Tuple[str, str, int]] = [
 
     # SURGERY GENERAL
     ("breast lump",                 "Surgery (General)",                        10),
+    ("breast lamp",                 "Surgery (General)",                        10),  # voice mishear of lump
+    ("breast ganth",                "Surgery (General)",                        10),  # Hindi ganth = lump
+    ("breast mein ganth",           "Surgery (General)",                        10),
+    ("breast mein lamp",            "Surgery (General)",                        10),
+    ("breast mein lump",            "Surgery (General)",                        10),
+    ("breast swelling",             "Surgery (General)",                         8),
+    ("breast mass",                 "Surgery (General)",                        10),
+    ("ganth in breast",             "Surgery (General)",                        10),
+    ("ganth breast",                "Surgery (General)",                        10),
     ("lump in armpit",              "Surgery (General)",                         7),
     ("swelling in armpit",          "Surgery (General)",                         7),
+    ("ganth in armpit",             "Surgery (General)",                         7),  # Hindi
     ("thyroid surgery",             "Surgery (General)",                         7),
     ("thyroid cancer",              "Surgery (General)",                         7),
     ("thyroid nodule",              "Surgery (General)",                         7),
