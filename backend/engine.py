@@ -3,16 +3,19 @@ engine.py — Sahayak v8
 Python Scoring Engine.
 
 Responsibilities:
-  1. emergency_check()      — dual source: features{} + raw_flags{}
+  1. red_flag_check()       — detects concerning symptom combos -> soft advisory only
   2. score_departments()    — feature scoring -> top 3 + confidence gap
-  3. get_severity()         — Emergency / Urgent / Routine / Self-care
+  3. get_severity()         — Urgent / Routine / Self-care
   4. is_selfcare_eligible() — isolated mild symptom -> self-care path
 
 DESIGN PRINCIPLE:
-  Python only filters candidates reliably into top 3.
-  LLM 2 (clinical_prompt.py) does the final clinical tie-break.
-  Keep Python simple — do NOT try to be perfect here.
-  Emergency layer is HARDCODED — LLM can never override it.
+  This app is a navigation tool for AIIMS OPD patients — not a triage system.
+  90%+ of users are routine OPD patients from remote areas seeking the right dept.
+  We NEVER hard-route to emergency. We always route to the relevant OPD department.
+
+  If red-flag symptom combos are detected, we set show_advisory = True so LLM 2
+  includes a calm note: "Agar symptoms bahut severe hain — Casualty bhi available hai."
+  The patient, who knows their own body, makes the final call.
 """
 
 import re
@@ -20,106 +23,93 @@ from typing import Dict, List, Optional, Tuple
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 1 — EMERGENCY DETECTION
+# SECTION 1 — RED FLAG ADVISORY DETECTION
 # ══════════════════════════════════════════════════════════════════════════════
+# These do NOT route to emergency. They trigger a soft advisory shown alongside
+# the normal OPD department routing.
 
-# Any of these in LLM 1 extracted features -> Emergency
-EMERGENCY_FEATURE_TRIGGERS = [
-    "chest pain", "seene mein dard", "chest dard",
-    "saans nahi", "cannot breathe", "dam ghutna",
+# Raw flag combinations that warrant a soft advisory
+RED_FLAG_COMBO_RULES = [
+    ["chest_pain", "breathlessness"],
+    ["chest_pain", "arm_pain"],
+    ["chest_pain", "sweating"],
+    ["breathlessness", "unconscious"],
+    ["breathlessness", "arm_pain"],
+    ["unconscious"],
+    ["stroke"],
+    ["heavy_bleeding"],
+    ["seizure"],
+]
+
+# Feature-level phrases that trigger advisory (unconditional)
+RED_FLAG_FEATURE_TRIGGERS = [
     "unconscious", "behosh", "fainted", "collapsed",
     "seizure", "fits", "convulsion", "jhatke",
     "stroke", "facial droop", "chehra teda", "laqwa",
     "heavy bleeding", "khoon band nahi",
     "vomiting blood", "ulti mein khoon", "haematemesis",
-    "head injury", "sar par chot", "head trauma",
-    "arm weakness", "ek taraf kamzori",
-    "heart attack",
-    "snake bite", "snakebite",
-    "allergic reaction", "anaphylaxis",
-    "throat swelling", "lips swelling", "lip swelling",
+    "loss of consciousness", "not breathing",
     "lips turning blue", "blue lips",
-    "overdose", "drug overdose",
-    "unable to speak", "cannot speak", "loss of speech",
     "facial drooping", "face drooping",
-    "severe burns",
-    "loss of consciousness",
-    "not breathing",
+    "unable to speak", "loss of speech",
 ]
 
-# These only trigger Emergency when severity_hint is severe/acute/moderate
-SEVERITY_GATED_EMERGENCY_TRIGGERS = [
-    "breathlessness", "shortness of breath", "difficulty breathing",
-    "breathing difficulty", "severe breathing",
+# Chest pain only triggers advisory when combined with severity or these symptoms
+CHEST_PAIN_ADVISORY_COMBOS = [
+    "breathlessness", "shortness of breath", "saans",
+    "sweating", "pasina", "arm pain", "arm weakness",
+    "jaw pain", "nausea", "vomiting",
 ]
 
-# raw_flags combinations -> Emergency
-# Each inner list: ALL flags must be True to trigger
-# NOTE: breathlessness alone is NOT listed here intentionally —
-# it is severity-gated in emergency_check() via SEVERITY_GATED_EMERGENCY_TRIGGERS.
-# Standalone breathlessness keyword only triggers emergency when severity is confirmed severe/moderate.
-RAW_FLAG_EMERGENCY_RULES = [
-    ["chest_pain"],
-    ["unconscious"],
-    ["stroke"],
-    ["heavy_bleeding"],
-    ["seizure"],
-    ["vomiting_blood"],
-    ["head_injury"],
-    ["child_emergency"],
-    ["arm_pain", "sweating"],
-    ["chest_pain", "arm_pain"],
-    ["chest_pain", "sweating"],
-    ["breathlessness", "chest_pain"],
-    ["breathlessness", "unconscious"],
-    ["breathlessness", "arm_pain"],
-]
+ACUTE_SEVERITIES = {"severe", "acute", "high", "critical", "tez", "bahut", "zyada"}
 
 
-def emergency_check(features: Dict, raw_flags: Dict[str, bool]) -> Optional[str]:
+def red_flag_check(features: Dict, raw_flags: Dict[str, bool]) -> bool:
     """
-    Dual-source emergency detection.
-    Checks BOTH LLM 1 features AND keyword_scan raw_flags.
-    Either source alone can trigger Emergency.
+    Detects whether a soft advisory should be shown alongside OPD routing.
+    Never routes to emergency — only signals the advisory flag.
 
     Returns:
-        "Casualty / Emergency" if detected, else None
+        True if soft advisory is warranted, else False
     """
     primary    = (features.get("primary_complaint") or "").lower()
     associated = [s.lower() for s in (features.get("associated_symptoms") or [])]
     severity   = (features.get("severity_hint") or "").lower()
     all_text   = primary + " " + " ".join(associated)
 
-    # REHAB OVERRIDE — post-acute/rehab context suppresses stroke/seizure triggers
+    # Rehab context suppresses advisory for stroke/seizure terms
     REHAB_SUPPRESSORS = [
-        "rehab", "rehabilitation", "physiotherapy", "therapy",
-        "after stroke", "post stroke", "post-stroke",
-        "after injury", "requiring rehab", "needing therapy",
-        "gait retraining", "spinal injury", "difficulty walking after",
+        "rehab", "rehabilitation", "physiotherapy", "after stroke",
+        "post stroke", "post-stroke", "requiring rehab", "needing therapy",
+        "gait retraining", "spinal injury",
     ]
-    is_rehab_context = any(s in all_text for s in REHAB_SUPPRESSORS)
+    if any(s in all_text for s in REHAB_SUPPRESSORS):
+        return False
 
-    # PATH A — unconditional feature triggers
-    for trigger in EMERGENCY_FEATURE_TRIGGERS:
+    # Unconditional feature red flags
+    for trigger in RED_FLAG_FEATURE_TRIGGERS:
         if trigger in all_text:
-            if is_rehab_context and trigger in ["stroke", "paralysis", "seizure"]:
-                continue
-            return "Casualty / Emergency"
+            return True
 
-    # PATH B — severity-gated triggers (breathlessness etc.)
-    # Only fire Emergency when severity is confirmed severe/acute/moderate
-    ACUTE_SEVERITIES = {"severe", "acute", "high", "critical", "tez", "bahut", "zyada", "moderate"}
-    if severity in ACUTE_SEVERITIES:
-        for trigger in SEVERITY_GATED_EMERGENCY_TRIGGERS:
-            if trigger in all_text:
-                return "Casualty / Emergency"
+    # Chest pain: advisory only when severe OR combined with another red flag
+    has_chest_pain = (
+        "chest pain" in all_text or "seene mein dard" in all_text or
+        "chest dard" in all_text or raw_flags.get("chest_pain", False)
+    )
+    if has_chest_pain:
+        if severity in ACUTE_SEVERITIES:
+            return True
+        if any(combo in all_text for combo in CHEST_PAIN_ADVISORY_COMBOS):
+            return True
+        if raw_flags.get("arm_pain") or raw_flags.get("sweating"):
+            return True
 
-    # PATH C — raw_flags from keyword_scan (always trusted)
-    for rule in RAW_FLAG_EMERGENCY_RULES:
+    # Raw flag combos
+    for rule in RED_FLAG_COMBO_RULES:
         if all(raw_flags.get(flag, False) for flag in rule):
-            return "Casualty / Emergency"
+            return True
 
-    return None
+    return False
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -984,11 +974,6 @@ SCORING_RULES: List[Tuple[str, str, int]] = [
     ("anaemia",                     "Medicine (General)",                        3),
 ]
 
-# Short acronyms (≤4 chars, letters only) need word-boundary matching to avoid
-# substring false matches e.g. "ild" inside "mild" or "child"
-# Computed once at import time — not on every request.
-_ACRONYM_KWS = frozenset(kw for kw, _, _ in SCORING_RULES if len(kw) <= 4 and kw.isalpha())
-
 
 def score_departments(features: Dict) -> List[Dict]:
     """
@@ -1010,8 +995,12 @@ def score_departments(features: Dict) -> List[Dict]:
 
     scores: Dict[str, int] = {}
 
+    # Short acronyms (≤4 chars, letters only) need word-boundary matching to avoid
+    # substring false matches e.g. "ild" inside "mild" or "child"
+    ACRONYM_KWS = {kw for kw, _, _ in SCORING_RULES if len(kw) <= 4 and kw.isalpha()}
+
     for keyword, dept, points in SCORING_RULES:
-        if keyword in _ACRONYM_KWS:
+        if keyword in ACRONYM_KWS:
             if not re.search(r'\b' + re.escape(keyword) + r'\b', symptom_text):
                 continue
         elif keyword not in symptom_text:
@@ -1035,9 +1024,9 @@ def score_departments(features: Dict) -> List[Dict]:
     if has("back pain") and (has("numbness") or has("numb")) and (has("walk") or has("gait")):
         scores["Neurosurgery (Brain Surgery)"] = scores.get("Neurosurgery (Brain Surgery)", 0) + 12
 
-    # Stroke pattern: facial + weakness or speech
+    # Stroke pattern: facial + weakness or speech → Neurology OPD
     if (has("facial") or has("face")) and (has("weakness") or has("speech") or has("slurring")):
-        scores["Casualty / Emergency"] = scores.get("Casualty / Emergency", 0) + 20
+        scores["Neurology (Brain & Nerves)"] = scores.get("Neurology (Brain & Nerves)", 0) + 20
 
     # Surgical lung: lung + tumor/mass + surgical context
     if has("lung") and (has("tumor") or has("tumour") or has("mass")) and (has("surg") or has("remov")):
@@ -1113,14 +1102,10 @@ URGENT_DURATION_KEYWORDS = [
 ]
 
 
-def get_severity(features: Dict, is_emergency: bool = False, is_selfcare: bool = False) -> str:
+def get_severity(features: Dict, is_selfcare: bool = False) -> str:
     """
-    Returns one of: "emergency" | "urgent" | "routine" | "selfcare"
+    Returns one of: "urgent" | "routine" | "selfcare"
     """
-    if is_emergency:
-        return "emergency"
-
-    # Self-care check (result passed in from run_engine to avoid recomputation)
     if is_selfcare:
         return "selfcare"
 
@@ -1159,42 +1144,30 @@ def run_engine(features: Dict, raw_flags: Dict[str, bool]) -> Dict:
 
     Returns:
         {
-            "emergency_dept": "Casualty / Emergency" or None,
-            "is_emergency":   bool,
+            "show_advisory":  bool  — True if soft Casualty advisory should be shown,
             "is_selfcare":    bool,
             "top3":           [{"dept":..., "score":...}, ...],
             "confidence_gap": int (0-100),
-            "severity":       "emergency"|"urgent"|"routine"|"selfcare",
+            "severity":       "urgent"|"routine"|"selfcare",
         }
     """
-    # Step 1 — Emergency (dual source)
-    emergency_dept = emergency_check(features, raw_flags)
-    is_emergency   = emergency_dept is not None
+    # Step 1 — Red flag advisory check
+    show_advisory = red_flag_check(features, raw_flags)
 
-    # Step 2 — Self-care (only if not emergency)
-    is_selfcare = False if is_emergency else is_selfcare_eligible(features)
+    # Step 2 — Self-care eligibility
+    is_selfcare = is_selfcare_eligible(features)
 
-    # Step 3 — Score departments (always — LLM 2 needs context)
+    # Step 3 — Score departments
     top3 = score_departments(features)
-
-    # Step 3b — If emergency, ensure Casualty appears in top3
-    # so downstream systems and tests can rely on top3 for routing
-    if is_emergency:
-        already = any(d["dept"] == "Casualty / Emergency" for d in top3)
-        if not already:
-            # Insert Casualty at position 0 with a score higher than top1
-            top_score = top3[0]["score"] if top3 else 1
-            top3 = [{"dept": "Casualty / Emergency", "score": top_score + 10}] + top3[:2]
 
     # Step 4 — Confidence gap
     confidence_gap = get_confidence_gap(top3)
 
     # Step 5 — Severity
-    severity = get_severity(features, is_emergency, is_selfcare)
+    severity = get_severity(features, is_selfcare)
 
     return {
-        "emergency_dept": emergency_dept,
-        "is_emergency":   is_emergency,
+        "show_advisory":  show_advisory,
         "is_selfcare":    is_selfcare,
         "top3":           top3,
         "confidence_gap": confidence_gap,
@@ -1217,62 +1190,62 @@ if __name__ == "__main__":
 
     tests = [
         {
-            "label": "🔴 Heart attack — Emergency via features",
-            "features": {"primary_complaint": "chest pain", "associated_symptoms": ["arm pain", "sweating"], "severity_hint": "severe", "onset": "sudden", "duration": "1 hour", "age": 52, "gender": "male"},
-            "raw_flags": {**NO_FLAGS, "chest_pain": True, "arm_pain": True, "sweating": True},
-            "expect": {"is_emergency": True},
+            "label": "⚠️  Chest pain alone — OPD routing, NO advisory",
+            "features": {"primary_complaint": "chest pain", "associated_symptoms": [], "severity_hint": None, "onset": None, "duration": None, "age": 35, "gender": "male", "negations": [], "body_part": None, "context_flags": {}},
+            "raw_flags": {**NO_FLAGS, "chest_pain": True},
+            "expect": {"show_advisory": False, "is_selfcare": False},
         },
         {
-            "label": "🔴 Behosh — Emergency via raw_flags only",
-            "features": {"primary_complaint": "chakkar", "associated_symptoms": [], "severity_hint": "moderate", "onset": "sudden", "duration": "5 min", "age": 40, "gender": "male"},
+            "label": "⚠️  Chest pain + breathlessness — OPD + advisory",
+            "features": {"primary_complaint": "chest pain", "associated_symptoms": ["breathlessness"], "severity_hint": "moderate", "onset": "gradual", "duration": "2 din", "age": 45, "gender": "male", "negations": [], "body_part": None, "context_flags": {}},
+            "raw_flags": {**NO_FLAGS, "chest_pain": True, "breathlessness": True},
+            "expect": {"show_advisory": True, "is_selfcare": False},
+        },
+        {
+            "label": "⚠️  Chest pain severe — OPD + advisory",
+            "features": {"primary_complaint": "chest pain", "associated_symptoms": [], "severity_hint": "severe", "onset": "sudden", "duration": "1 ghanta", "age": 52, "gender": "male", "negations": [], "body_part": None, "context_flags": {}},
+            "raw_flags": {**NO_FLAGS, "chest_pain": True, "sweating": True, "arm_pain": True},
+            "expect": {"show_advisory": True},
+        },
+        {
+            "label": "⚠️  Behosh — OPD + advisory",
+            "features": {"primary_complaint": "behosh", "associated_symptoms": [], "severity_hint": "severe", "onset": "sudden", "duration": None, "age": 40, "gender": "male", "negations": [], "body_part": None, "context_flags": {}},
             "raw_flags": {**NO_FLAGS, "unconscious": True},
-            "expect": {"is_emergency": True},
+            "expect": {"show_advisory": True},
         },
         {
-            "label": "🏠 Mild fever alone — Self-care",
-            "features": {"primary_complaint": "fever", "associated_symptoms": [], "severity_hint": "mild", "onset": "gradual", "duration": "1 din", "age": 28, "gender": "male"},
+            "label": "🏠 Mild fever alone — Self-care, no advisory",
+            "features": {"primary_complaint": "fever", "associated_symptoms": [], "severity_hint": "mild", "onset": "gradual", "duration": "1 din", "age": 28, "gender": "male", "negations": [], "body_part": None, "context_flags": {}},
             "raw_flags": NO_FLAGS,
-            "expect": {"is_selfcare": True, "severity": "selfcare"},
+            "expect": {"is_selfcare": True, "severity": "selfcare", "show_advisory": False},
         },
         {
             "label": "🏠 Mild headache alone — Self-care",
-            "features": {"primary_complaint": "sar dard", "associated_symptoms": [], "severity_hint": "mild", "onset": "gradual", "duration": "2 din", "age": 35, "gender": "female"},
+            "features": {"primary_complaint": "sar dard", "associated_symptoms": [], "severity_hint": "mild", "onset": "gradual", "duration": "2 din", "age": 35, "gender": "female", "negations": [], "body_part": None, "context_flags": {}},
             "raw_flags": NO_FLAGS,
-            "expect": {"is_selfcare": True},
+            "expect": {"is_selfcare": True, "show_advisory": False},
         },
         {
             "label": "🚫 Fever in child < 5 — NOT self-care",
-            "features": {"primary_complaint": "fever", "associated_symptoms": [], "severity_hint": "mild", "onset": "gradual", "duration": "1 din", "age": 3, "gender": "male"},
+            "features": {"primary_complaint": "fever", "associated_symptoms": [], "severity_hint": "mild", "onset": "gradual", "duration": "1 din", "age": 3, "gender": "male", "negations": [], "body_part": None, "context_flags": {}},
             "raw_flags": NO_FLAGS,
             "expect": {"is_selfcare": False, "severity": "urgent"},
         },
         {
-            "label": "🚫 Fever + cough — NOT self-care (associated symptom)",
-            "features": {"primary_complaint": "fever", "associated_symptoms": ["cough"], "severity_hint": "mild", "onset": "gradual", "duration": "2 din", "age": 30, "gender": "male"},
+            "label": "🟢 Diabetes routine — Endocrinology, no advisory",
+            "features": {"primary_complaint": "diabetes", "associated_symptoms": ["weight loss"], "severity_hint": "mild", "onset": "gradual", "duration": "6 mahine", "age": 48, "gender": "male", "negations": [], "body_part": None, "context_flags": {}},
             "raw_flags": NO_FLAGS,
-            "expect": {"is_selfcare": False},
+            "expect": {"is_selfcare": False, "show_advisory": False},
         },
         {
-            "label": "🟡 Chest pain + breathlessness — Cardiology/Pulmonary",
-            "features": {"primary_complaint": "chest pain", "associated_symptoms": ["breathlessness"], "severity_hint": "moderate", "onset": "gradual", "duration": "2 din", "age": 45, "gender": "male"},
+            "label": "🟢 Kidney stone — Urology, no advisory",
+            "features": {"primary_complaint": "kidney stone", "associated_symptoms": ["peshaab mein jalan"], "severity_hint": "moderate", "onset": "sudden", "duration": "1 din", "age": 38, "gender": "male", "negations": [], "body_part": None, "context_flags": {}},
             "raw_flags": NO_FLAGS,
-            "expect": {"is_emergency": True},  # chest pain = emergency
-        },
-        {
-            "label": "🟢 Diabetes routine — Endocrinology",
-            "features": {"primary_complaint": "diabetes", "associated_symptoms": ["weight loss"], "severity_hint": "mild", "onset": "gradual", "duration": "6 mahine", "age": 48, "gender": "male"},
-            "raw_flags": NO_FLAGS,
-            "expect": {"is_emergency": False, "is_selfcare": False},
-        },
-        {
-            "label": "🟢 Kidney stone — Urology top",
-            "features": {"primary_complaint": "kidney stone", "associated_symptoms": ["peshaab mein jalan"], "severity_hint": "moderate", "onset": "sudden", "duration": "1 din", "age": 38, "gender": "male"},
-            "raw_flags": NO_FLAGS,
-            "expect": {"is_emergency": False},
+            "expect": {"show_advisory": False},
         },
         {
             "label": "👶 Child 4 yrs — Paediatrics boosted",
-            "features": {"primary_complaint": "fever", "associated_symptoms": ["loose motion"], "severity_hint": "moderate", "onset": "gradual", "duration": "2 din", "age": 4, "gender": "male"},
+            "features": {"primary_complaint": "fever", "associated_symptoms": ["loose motion"], "severity_hint": "moderate", "onset": "gradual", "duration": "2 din", "age": 4, "gender": "male", "negations": [], "body_part": None, "context_flags": {}},
             "raw_flags": NO_FLAGS,
             "expect": {"is_selfcare": False, "severity": "urgent"},
         },
@@ -1282,20 +1255,17 @@ if __name__ == "__main__":
     all_passed = True
     for tc in tests:
         result = run_engine(tc["features"], tc["raw_flags"])
-        passed = True
-        for key, expected_val in tc["expect"].items():
-            if result.get(key) != expected_val:
-                passed = False
-                all_passed = False
-
+        passed = all(result.get(k) == v for k, v in tc["expect"].items())
+        if not passed:
+            all_passed = False
         status = "✅ PASS" if passed else "❌ FAIL"
         print(f"\n{status} {tc['label']}")
-        print(f"       emergency={result['is_emergency']}  selfcare={result['is_selfcare']}  severity={result['severity']}")
+        print(f"       advisory={result['show_advisory']}  selfcare={result['is_selfcare']}  severity={result['severity']}")
         print(f"       top3={[d['dept'].split('(')[0].strip() for d in result['top3']]}")
         print(f"       gap={result['confidence_gap']}%")
         if not passed:
-            for key, expected_val in tc["expect"].items():
-                if result.get(key) != expected_val:
-                    print(f"       ❌ expected {key}={expected_val}, got {result.get(key)}")
+            for k, v in tc["expect"].items():
+                if result.get(k) != v:
+                    print(f"       ❌ expected {k}={v}, got {result.get(k)}")
 
     print(f"\n── {'All tests passed ✅' if all_passed else 'Some tests failed ❌'} ──")

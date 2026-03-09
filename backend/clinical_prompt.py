@@ -78,7 +78,7 @@ OUTPUT FORMAT — EXACTLY THIS JSON, NOTHING ELSE:
 ════════════════════════════════════════
 {
   "final_dept": "Exact department name or null",
-  "severity": "emergency | urgent | routine | selfcare",
+  "severity": "urgent | routine | selfcare",
   "confidence": integer 0-100,
   "python_correct": true or false,
   "reason": "1-2 line Hinglish explanation WHY this department (for patient)",
@@ -118,22 +118,21 @@ Neurosurgery (Brain Surgery)
 Ophthalmology (Eyes)
 Dental Surgery
 Oncology (Cancer)
-Casualty / Emergency
 Pulmonary Medicine
 
 ════════════════════════════════════════
 ROUTING LOGIC — FOLLOW THIS ORDER:
 ════════════════════════════════════════
 
-STEP 1 — EMERGENCY CHECK (already done by Python, but verify):
-If engine says is_emergency = true OR patient has:
-  chest pain, saans nahi, behosh, seizure, stroke signs, heavy bleeding,
-  head injury, snake bite, anaphylaxis, blue lips, overdose, not breathing
-→ final_dept = "Casualty / Emergency"
-→ severity = "emergency"
-→ reply = "Kripya TURANT Casualty / Emergency jaayein! Yeh emergency hai. Deri mat karein."
-→ follow_up_needed = false
-→ confidence = 100
+STEP 1 — ADVISORY CHECK:
+If engine says show_advisory = true (red-flag symptom combo detected):
+→ Route normally to the correct OPD department (Cardiology, Neurology, etc.)
+→ At the end of your reply, add ONE calm line:
+  "Agar takleef achanak bahut badh jaaye ya saans lene mein dikkat ho — Casualty bhi 24×7 available hai."
+→ Do NOT alarm the patient — keep the advisory brief and gentle
+→ Do NOT use words like "TURANT", "emergency hai", "deri mat karo"
+→ Severity should reflect clinical picture (urgent/routine), NOT "emergency"
+→ action_advice = normal OPD advice for the department
 
 STEP 2 — DOCTOR / BROWSE REQUEST:
 If context_flags.needs_doctor_name = true:
@@ -158,7 +157,7 @@ If engine says is_selfcare = true (isolated mild symptom, adult, short duration)
 → action_advice = "Ghar pe aaram karein. 3 din mein theek na ho toh OPD aayein."
 → follow_up_needed = false
 
-STEP 4 — MISSING AGE/GENDER (ask first, except emergency):
+STEP 4 — MISSING AGE/GENDER (ask first, except browse/selfcare):
 If age = null AND gender = null AND primary_complaint is a symptom:
 → final_dept = null
 → follow_up_needed = true
@@ -222,7 +221,6 @@ You are given confirmed_symptoms[] and denied_symptoms[] from conversation histo
 ════════════════════════════════════════
 ACTION ADVICE GUIDE:
 ════════════════════════════════════════
-severity = emergency  → "TURANT Casualty jaayein — deri bilkul mat karein!"
 severity = urgent     → "Aaj hi OPD visit karein — kal tak mat roko."
 severity = routine    → "OPD mein appointment lijiye."
 severity = selfcare   → "Ghar pe aaram karein. 3 din mein theek na ho toh OPD aayein."
@@ -286,18 +284,18 @@ Engine: top3=[Cardiology(22), Pulmonary(9)], gap=59%, severity=urgent, features:
   "disclaimer": "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge."
 }
 
-EXAMPLE 2 — Emergency:
-Engine: is_emergency=true, features: chest pain + behosh, severity=emergency
+EXAMPLE 2 — Advisory (chest pain + breathlessness, show_advisory=true):
+Engine: show_advisory=true, features: chest pain + breathlessness, severity=urgent
 {
-  "final_dept": "Casualty / Emergency",
-  "severity": "emergency",
-  "confidence": 100,
+  "final_dept": "Cardiology (Heart)",
+  "severity": "urgent",
+  "confidence": 88,
   "python_correct": true,
-  "reason": "Chest pain aur behoshi emergency signs hain",
-  "action_advice": "TURANT Casualty jaayein — deri bilkul mat karein!",
+  "reason": "Chest pain with breathlessness needs Cardiology evaluation urgently",
+  "action_advice": "Jaldi se Cardiology OPD mein jaayein — aaj hi appointment lein.",
   "follow_up_needed": false,
   "follow_up_question": null,
-  "reply": "Kripya TURANT Casualty / Emergency jaayein! Yeh emergency hai. Deri mat karein.",
+  "reply": "Aapke symptoms sunkar lagta hai Cardiology (Heart) OPD mein doctor se milna chahiye. Seene ka dard aur saans lene mein takleef ko dhyan dena zaroori hai — jaldi OPD visit karein.\n\nAgar takleef achanak bahut badh jaaye ya saans lene mein dikkat ho — Casualty bhi 24×7 available hai.",
   "disclaimer": "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge."
 }
 
@@ -347,7 +345,7 @@ Engine: top3=[Orthopaedics(15), Rheumatology(12)], gap=20%, features: bilateral 
 }
 
 EXAMPLE 6 — Missing age/gender:
-Engine: features: chest pain, age=null, gender=null, is_emergency=false
+Engine: features: chest pain, age=null, gender=null, show_advisory=false
 {
   "final_dept": null,
   "severity": "routine",
@@ -426,7 +424,7 @@ def build_clinical_messages(
     context = {
         "features": features,
         "engine_output": {
-            "is_emergency":    engine_output.get("is_emergency", False),
+            "show_advisory":   engine_output.get("show_advisory", False),
             "is_selfcare":     engine_output.get("is_selfcare", False),
             "top3":            engine_output.get("top3", []),
             "confidence_gap":  engine_output.get("confidence_gap", 0),
@@ -549,12 +547,12 @@ if __name__ == "__main__":
             "is_chronic_condition": False,
             "needs_doctor_name": False,
             "is_browse_request": False,
-            "is_emergency_self_declared": False,
+            "is_name_search": False,
         }
     }
 
     sample_engine = {
-        "is_emergency": True,
+        "show_advisory": True,
         "is_selfcare": False,
         "top3": [{"dept": "Casualty / Emergency", "score": 32}, {"dept": "Cardiology (Heart)", "score": 22}],
         "confidence_gap": 31,
@@ -576,15 +574,15 @@ if __name__ == "__main__":
 
     # Test parse_clinical_response — valid
     valid = '''{
-        "final_dept": "Casualty / Emergency",
-        "severity": "emergency",
+        "final_dept": "Cardiology (Heart)",
+        "severity": "urgent",
         "confidence": 100,
         "python_correct": true,
-        "reason": "Chest pain + palpitations emergency signs hain",
-        "action_advice": "TURANT Casualty jaayein!",
+        "reason": "Chest pain + breathlessness ke liye Cardiology mein doctor se milna chahiye.",
+        "action_advice": "Aaj hi Cardiology OPD visit karein.",
         "follow_up_needed": false,
         "follow_up_question": null,
-        "reply": "Kripya TURANT Casualty / Emergency jaayein! Yeh emergency hai.",
+        "reply": "Aapke symptoms ke liye Cardiology (Heart) OPD mein doctor se milein. Neeche is department ke doctors dekh skte hain. Agar takleef achanak bahut badh jaaye ya saans lene mein dikkat ho — Casualty bhi 24×7 available hai.",
         "disclaimer": "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge."
     }'''
     parsed = parse_clinical_response(valid)

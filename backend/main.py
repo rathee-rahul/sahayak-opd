@@ -5,7 +5,7 @@ Full pipeline rewire.
 v8 flow per /chat request:
   ① sanitize_input()           — PII scrub, always first
   ② keyword_scan() + LLM 1    — async parallel
-  ③ emergency_check()          — dual source, hardcoded
+  ③ red_flag_check()           — advisory signal only, never blocks routing
   ④ run_engine()               — score top3, severity, self-care
   ⑤ LLM 2 (clinical)          — final routing + reply
   ⑥ doctor fetch               — from doctor_data.json
@@ -31,7 +31,7 @@ from thefuzz import fuzz
 
 # ── v8 modules ────────────────────────────────────────────────
 from sanitize        import sanitize_input, was_sanitized
-from keyword_scan    import keyword_scan, any_emergency_flag
+from keyword_scan    import keyword_scan
 from engine          import run_engine
 from extractor_prompt import (
     EXTRACTOR_SYSTEM_PROMPT,
@@ -323,7 +323,7 @@ async def chat(request: ChatRequest):
     # ── STEP 3 + 4: Engine ───────────────────────────────────
     engine_output = run_engine(features, raw_flags)
 
-    print(f"[Engine] emergency={engine_output['is_emergency']} "
+    print(f"[Engine] advisory={engine_output['show_advisory']} "
           f"selfcare={engine_output['is_selfcare']} "
           f"severity={engine_output['severity']} "
           f"top3={[d['dept'].split('(')[0].strip() for d in engine_output['top3']]} "
@@ -348,16 +348,6 @@ async def chat(request: ChatRequest):
 
     clinical = parse_clinical_response(llm2_raw)
 
-    # ── STEP 5b: Safety override — engine emergency wins ──────
-    if engine_output["is_emergency"] and clinical.get("final_dept") != "Casualty / Emergency":
-        print("[Safety] Engine emergency overrides LLM 2")
-        clinical["final_dept"]       = "Casualty / Emergency"
-        clinical["severity"]         = "emergency"
-        clinical["confidence"]       = 100
-        clinical["follow_up_needed"] = False
-        clinical["reply"]            = "Kripya TURANT Casualty / Emergency jaayein! Yeh emergency hai. Deri mat karein."
-        clinical["action_advice"]    = "TURANT Casualty jaayein — deri bilkul mat karein!"
-
     print(f"[LLM2] dept={clinical.get('final_dept')} "
           f"severity={clinical.get('severity')} "
           f"confidence={clinical.get('confidence')} "
@@ -366,7 +356,7 @@ async def chat(request: ChatRequest):
 
     # ── STEP 6: Doctor fetch ──────────────────────────────────
     final_dept       = clinical.get("final_dept")
-    is_emergency     = engine_output["is_emergency"] or (clinical.get("severity") == "emergency")
+    show_advisory    = engine_output["show_advisory"]
     is_selfcare      = engine_output["is_selfcare"]
     referral_required = (
         clinical.get("referral_required", False) or
@@ -409,7 +399,7 @@ async def chat(request: ChatRequest):
         jpnatc_docs  = [d for d in all_docs if _is_jpnatc(d)]
         dept_doctors = todays_main + others_main + jpnatc_docs
 
-    elif is_emergency or is_selfcare:
+    elif is_selfcare:
         dept_doctors = []
 
     elif final_dept:
@@ -442,7 +432,7 @@ async def chat(request: ChatRequest):
         "follow_up_question": clinical.get("follow_up_question"),
         "follow_up_count":    new_follow_up_count,
 
-        "is_emergency":     is_emergency,
+        "show_advisory":    show_advisory,
         "is_selfcare":      is_selfcare,
         "referral_required": referral_required,
 
@@ -460,7 +450,6 @@ async def chat(request: ChatRequest):
 
         "today":  TODAY_NAME,
         "intent": (
-            "emergency"         if is_emergency else
             "selfcare"          if is_selfcare  else
             "doctor_schedule"   if needs_doctor else
             "browse_department" if is_browse    else
