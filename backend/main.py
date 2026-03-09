@@ -87,15 +87,148 @@ REFERRAL_REQUIRED_DEPTS = {
 
 from departments import DEPARTMENTS
 
+# ── HINDI KEYWORD → DEPARTMENT MAP ────────────────────────────
+# Only needed for Hindi words that transliterate too differently
+# from English to fuzzy-match (e.g. "nyurolaji" ≠ "neurology").
+# Pure English/Hinglish queries go straight to fuzzy matching.
+_HINDI_DEPT_KEYWORDS = {
+    # Cardiology
+    "कार्डियोलॉजी":"Cardiology (Heart)",   "हृदय":"Cardiology (Heart)",
+    "दिल":"Cardiology (Heart)",
+    # Neurology
+    "न्यूरोलॉजी":"Neurology (Brain & Nerves)", "दिमाग":"Neurology (Brain & Nerves)",
+    # Neurosurgery
+    "न्यूरोसर्जरी":"Neurosurgery (Brain Surgery)",
+    # Orthopaedics
+    "ऑर्थोपेडिक्स":"Orthopaedics (Bones & Joints)", "हड्डी":"Orthopaedics (Bones & Joints)",
+    "जोड़":"Orthopaedics (Bones & Joints)",
+    # Gastroenterology
+    "गैस्ट्रोएंटरोलॉजी":"Gastroenterology (Stomach & Digestion)", "पेट":"Gastroenterology (Stomach & Digestion)",
+    # Pulmonary
+    "पल्मोनरी":"Pulmonary Medicine", "फेफड़े":"Pulmonary Medicine",
+    # Nephrology
+    "नेफ्रोलॉजी":"Nephrology", "किडनी":"Nephrology",
+    # Urology
+    "यूरोलॉजी":"Urology (Kidney & Urinary)",
+    # Endocrinology
+    "एंडोक्राइनोलॉजी":"Endocrinology (Diabetes & Hormones)",
+    "डायबिटीज":"Endocrinology (Diabetes & Hormones)", "शुगर":"Endocrinology (Diabetes & Hormones)",
+    "थायरॉइड":"Endocrinology (Diabetes & Hormones)",
+    # Dermatology
+    "डर्मेटोलॉजी":"Dermatology & Venereology (Skin)", "त्वचा":"Dermatology & Venereology (Skin)",
+    "चर्म":"Dermatology & Venereology (Skin)",
+    # ENT
+    "ईएनटी":"Otorhinolaryngology - ENT", "कान":"Otorhinolaryngology - ENT",
+    "नाक":"Otorhinolaryngology - ENT",
+    # Ophthalmology
+    "ऑफ्थैल्मोलॉजी":"Ophthalmology (Eyes)", "आंख":"Ophthalmology (Eyes)",
+    "नेत्र":"Ophthalmology (Eyes)",
+    # Psychiatry
+    "साइकेट्री":"Psychiatry (Mental Health)", "मानसिक":"Psychiatry (Mental Health)",
+    # Paediatrics
+    "पेडियाट्रिक्स":"Paediatrics Medicine (Children)", "बच्चे":"Paediatrics Medicine (Children)",
+    "बच्चों":"Paediatrics Medicine (Children)",
+    # Obs & Gynae
+    "गायनेकोलॉजी":"Obstetrics & Gynaecology", "प्रसूति":"Obstetrics & Gynaecology",
+    # Oncology
+    "ऑन्कोलॉजी":"Oncology (Cancer)", "कैंसर":"Oncology (Cancer)",
+    # Haematology
+    "हेमेटोलॉजी":"Haematology (Blood Disorders)", "खून":"Haematology (Blood Disorders)",
+    # Rheumatology
+    "रूमेटोलॉजी":"Rheumatology (Joint & Autoimmune)",
+    # Dental
+    "डेंटल":"Dental Surgery", "दांत":"Dental Surgery",
+    # Geriatric
+    "जेरियाट्रिक":"Geriatric Medicine (Elderly Care)", "बुजुर्ग":"Geriatric Medicine (Elderly Care)",
+    # Rehab
+    "फिजियोथेरेपी":"Physical Medicine & Rehabilitation",
+    "रिहैबिलिटेशन":"Physical Medicine & Rehabilitation",
+    # Surgery General
+    "सर्जरी":"Surgery (General)",
+    # Medicine General
+    "मेडिसिन":"Medicine (General)",
+}
+
+# ── HINGLISH / ENGLISH CONCEPT KEYWORDS ─────────────────────
+# For words that don't fuzzy-match dept names even after transliteration
+# e.g. "sugar" → "Endocrinology", "kidney" → "Nephrology"
+_CONCEPT_KEYWORDS = {
+    # body parts / common names → dept
+    "kidney":    "Nephrology",
+    "kidni":     "Nephrology",          # transliterated किडनी
+    "sugar":     "Endocrinology (Diabetes & Hormones)",
+    "diabetes":  "Endocrinology (Diabetes & Hormones)",
+    "thyroid":   "Endocrinology (Diabetes & Hormones)",
+    "ankha":     "Ophthalmology (Eyes)",  # transliterated आंख
+    "aankh":     "Ophthalmology (Eyes)",
+    "eye":       "Ophthalmology (Eyes)",
+    "eyes":      "Ophthalmology (Eyes)",
+    "haddi":     "Orthopaedics (Bones & Joints)",  # transliterated हड्डी
+    "hddi":      "Orthopaedics (Bones & Joints)",
+    "bone":      "Orthopaedics (Bones & Joints)",
+    "bones":     "Orthopaedics (Bones & Joints)",
+    "joint":     "Orthopaedics (Bones & Joints)",
+    "dil":       "Cardiology (Heart)",
+    "heart":     "Cardiology (Heart)",
+    "dimag":     "Neurology (Brain & Nerves)",
+    "brain":     "Neurology (Brain & Nerves)",
+    "cancer":    "Oncology (Cancer)",
+    "blood":     "Haematology (Blood Disorders)",
+    "khoon":     "Haematology (Blood Disorders)",
+    "skin":      "Dermatology & Venereology (Skin)",
+    "tvcha":     "Dermatology & Venereology (Skin)",  # transliterated त्वचा
+    "bachon":    "Paediatrics Medicine (Children)",   # transliterated बच्चों
+    "bacho":     "Paediatrics Medicine (Children)",
+    "children":  "Paediatrics Medicine (Children)",
+    "child":     "Paediatrics Medicine (Children)",
+    "pet":       "Gastroenterology (Stomach & Digestion)",
+    "stomach":   "Gastroenterology (Stomach & Digestion)",
+    "lungs":     "Pulmonary Medicine",
+    "sans":      "Pulmonary Medicine",               # saans = breathing
+    "mental":    "Psychiatry (Mental Health)",
+    "mansik":    "Psychiatry (Mental Health)",       # transliterated मानसिक
+    "teeth":     "Dental Surgery",
+    "dant":      "Dental Surgery",                   # transliterated दांत
+    "elderly":   "Geriatric Medicine (Elderly Care)",
+    "bujurg":    "Geriatric Medicine (Elderly Care)", # transliterated बुजुर्ग
+    "rehab":     "Physical Medicine & Rehabilitation",
+    "ear":       "Otorhinolaryngology - ENT",
+    "nose":      "Otorhinolaryngology - ENT",
+    "throat":    "Otorhinolaryngology - ENT",
+    "kan":       "Otorhinolaryngology - ENT",        # transliterated कान
+    "nak":       "Otorhinolaryngology - ENT",        # transliterated नाक
+    "gala":      "Otorhinolaryngology - ENT",        # transliterated गला
+    "ent":       "Otorhinolaryngology - ENT",   # whole-word only (see extract_browse_dept)
+    "nyuro":     "Neurology (Brain & Nerves)",        # transliterated न्यूरो
+    "neuro":     "Neurology (Brain & Nerves)",
+    "nyurolaji": "Neurology (Brain & Nerves)",
+    "neurology": "Neurology (Brain & Nerves)",
+}
+
 # ── BROWSE DEPARTMENT EXTRACTOR ───────────────────────────────
 def extract_browse_dept(message: str) -> str | None:
     """
-    Extract department name from a browse query using fuzzy matching.
-    e.g. "G.I. Surgery mein kaun se doctors hain?" → "G.I. Surgery (Stomach Surgery)"
-    Prefers longer/more-specific matches when scores are close.
-    Returns best matching department or None.
+    Extract department from browse query. Three-step approach:
+    1. Concept keyword match — handles words like "kidney", "sugar", "bachon",
+       transliterated Hindi bodies ("hddi", "ankha") that don't fuzzy-match dept names
+    2. Fuzzy match — handles English/Hinglish dept names directly
+    Note: message is already transliterated to Roman by the time it reaches here.
     """
     msg_lower = message.lower()
+
+    # Step 1 — Concept keyword match
+    # Short keywords (<=4 chars e.g. "ent", "pet", "dil") → whole word match only
+    # Longer keywords → substring match is fine
+    words = set(re.split(r'[\s,?।]+', msg_lower))
+    for keyword, dept in _CONCEPT_KEYWORDS.items():
+        if keyword.startswith("#"):
+            continue
+        matched = keyword in words if len(keyword) <= 4 else keyword in msg_lower
+        if matched:
+            print(f"[Browse] Concept keyword: '{keyword}' → '{dept}'")
+            return dept
+
+    # Step 2 — Fuzzy match against English department names
     best_dept  = None
     best_score = 0
 
@@ -105,7 +238,7 @@ def extract_browse_dept(message: str) -> str | None:
         score = max(
             fuzz.token_set_ratio(msg_lower, full_name),
             fuzz.token_set_ratio(msg_lower, short_name),
-            fuzz.partial_ratio(msg_lower, short_name),
+            fuzz.partial_ratio(msg_lower,   short_name),
         )
         if score > best_score or (
             score == best_score and best_dept and len(dept) > len(best_dept)
@@ -113,6 +246,7 @@ def extract_browse_dept(message: str) -> str | None:
             best_score = score
             best_dept  = dept
 
+    print(f"[Browse] msg='{msg_lower[:50]}' best='{best_dept}' score={best_score}")
     return best_dept if best_score >= 60 else None
 
 
@@ -232,9 +366,8 @@ def transliterate_hindi(text: str) -> str:
 
 
 def search_doctor_by_name(query: str, hint_dept: str = None):
-    # Transliterate Hindi voice input to Roman for fuzzy matching
-    query_roman = transliterate_hindi(query.strip())
-    query_lower = query_roman.lower()
+    # Input is already transliterated to Roman upstream (sanitize step)
+    query_lower = query.strip().lower()
 
     results = []
     for dept, doctors in DOCTOR_DATA.items():
@@ -378,6 +511,15 @@ async def chat(request: ChatRequest):
     sanitized = sanitize_input(raw_message)
     if was_sanitized(raw_message, sanitized):
         print("[PII] Input scrubbed")
+
+    # Transliterate Devanagari → Roman so ALL downstream processing
+    # (keyword_scan, dept extract, doctor search, LLM prompts) works
+    # whether user typed Hindi or spoke via voice.
+    # e.g. "कार्डियोलॉजी के डॉक्टर" → "cardiyoloji ke doctor"
+    original_for_log = sanitized
+    sanitized = transliterate_hindi(sanitized)
+    if sanitized != original_for_log:
+        print(f"[Transliterate] '{original_for_log[:50]}' → '{sanitized[:50]}'")
 
     # ── STEP 2: Parallel — keyword_scan + LLM 1 ──────────────
     extractor_messages = build_extractor_messages(sanitized, history)
