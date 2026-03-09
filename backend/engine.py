@@ -55,9 +55,11 @@ SEVERITY_GATED_EMERGENCY_TRIGGERS = [
 
 # raw_flags combinations -> Emergency
 # Each inner list: ALL flags must be True to trigger
+# NOTE: breathlessness alone is NOT listed here intentionally —
+# it is severity-gated in emergency_check() via SEVERITY_GATED_EMERGENCY_TRIGGERS.
+# Standalone breathlessness keyword only triggers emergency when severity is confirmed severe/moderate.
 RAW_FLAG_EMERGENCY_RULES = [
     ["chest_pain"],
-    ["breathlessness"],
     ["unconscious"],
     ["stroke"],
     ["heavy_bleeding"],
@@ -68,6 +70,9 @@ RAW_FLAG_EMERGENCY_RULES = [
     ["arm_pain", "sweating"],
     ["chest_pain", "arm_pain"],
     ["chest_pain", "sweating"],
+    ["breathlessness", "chest_pain"],
+    ["breathlessness", "unconscious"],
+    ["breathlessness", "arm_pain"],
 ]
 
 
@@ -979,6 +984,11 @@ SCORING_RULES: List[Tuple[str, str, int]] = [
     ("anaemia",                     "Medicine (General)",                        3),
 ]
 
+# Short acronyms (≤4 chars, letters only) need word-boundary matching to avoid
+# substring false matches e.g. "ild" inside "mild" or "child"
+# Computed once at import time — not on every request.
+_ACRONYM_KWS = frozenset(kw for kw, _, _ in SCORING_RULES if len(kw) <= 4 and kw.isalpha())
+
 
 def score_departments(features: Dict) -> List[Dict]:
     """
@@ -1000,12 +1010,8 @@ def score_departments(features: Dict) -> List[Dict]:
 
     scores: Dict[str, int] = {}
 
-    # Short acronyms (≤4 chars, letters only) need word-boundary matching to avoid
-    # substring false matches e.g. "ild" inside "mild" or "child"
-    ACRONYM_KWS = {kw for kw, _, _ in SCORING_RULES if len(kw) <= 4 and kw.isalpha()}
-
     for keyword, dept, points in SCORING_RULES:
-        if keyword in ACRONYM_KWS:
+        if keyword in _ACRONYM_KWS:
             if not re.search(r'\b' + re.escape(keyword) + r'\b', symptom_text):
                 continue
         elif keyword not in symptom_text:
@@ -1107,15 +1113,15 @@ URGENT_DURATION_KEYWORDS = [
 ]
 
 
-def get_severity(features: Dict, is_emergency: bool = False) -> str:
+def get_severity(features: Dict, is_emergency: bool = False, is_selfcare: bool = False) -> str:
     """
     Returns one of: "emergency" | "urgent" | "routine" | "selfcare"
     """
     if is_emergency:
         return "emergency"
 
-    # Self-care check first
-    if is_selfcare_eligible(features):
+    # Self-care check (result passed in from run_engine to avoid recomputation)
+    if is_selfcare:
         return "selfcare"
 
     severity_hint = (features.get("severity_hint") or "").lower()
@@ -1184,7 +1190,7 @@ def run_engine(features: Dict, raw_flags: Dict[str, bool]) -> Dict:
     confidence_gap = get_confidence_gap(top3)
 
     # Step 5 — Severity
-    severity = get_severity(features, is_emergency)
+    severity = get_severity(features, is_emergency, is_selfcare)
 
     return {
         "emergency_dept": emergency_dept,

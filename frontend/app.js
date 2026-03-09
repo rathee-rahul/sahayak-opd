@@ -1,5 +1,6 @@
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const BACKEND_URL = "https://sahayak-opd.onrender.com/chat";
+const BACKEND_BASE = BACKEND_URL.replace(/\/chat$/, "");
  
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let conversationHistory = [];
@@ -76,10 +77,8 @@ async function sendMessage(messageText) {
       }
     }
  
-    // Cross-department condition matches (e.g. hyperactivity found in Paediatrics + Psychiatry)
-    if (!data.doctor_query && data.condition_matches && data.condition_matches.length > 0) {
-      renderConditionMatches(data.condition_matches, data.sub_specialty, msgWrapper);
-    } else if (!data.doctor_query && data.department && data.doctors && data.doctors.length > 0) {
+    // Department doctors
+    if (!data.doctor_query && data.department && data.doctors && data.doctors.length > 0) {
       renderDeptDoctors(data.department, data.doctors, msgWrapper, data.sub_specialty);
     }
  
@@ -165,53 +164,6 @@ function renderAmbiguousResults(query, results, containerEl) {
   requestAnimationFrame(() => requestAnimationFrame(() => wrapper.classList.add("visible")));
 }
  
-// ─── RENDER: CROSS-DEPARTMENT CONDITION MATCHES ──────────────────────────────
-function renderConditionMatches(matches, sub_specialty, containerEl) {
-  // Group matches by department
-  const byDept = {};
-  matches.forEach(m => {
-    if (!byDept[m.dept]) byDept[m.dept] = [];
-    byDept[m.dept].push(m.doctor);
-  });
-
-  const deptNames = Object.keys(byDept);
-  const totalDocs = matches.length;
-  const todayCount = matches.filter(m => isDoctorAvailableToday(m.doctor.opd_days)).length;
-
-  const wrapper = document.createElement("div");
-  wrapper.className = "doctor-cards-wrapper";
-
-  const subSpecLine = sub_specialty
-    ? `<div class="dch-subspecialty">🔎 Matching doctors for: <strong>${sub_specialty}</strong></div>`
-    : "";
-
-  // Build cards grouped by department
-  let cardsHtml = "";
-  deptNames.forEach(dept => {
-    const docs = byDept[dept];
-    const sorted = [...docs].sort((a,b) =>
-      isDoctorAvailableToday(b.opd_days) - isDoctorAvailableToday(a.opd_days)
-    );
-    cardsHtml += `<div class="dept-group-label">🏥 ${dept}</div>`;
-    cardsHtml += sorted.map(doc => buildCard(doc, dept)).join("");
-  });
-
-  wrapper.innerHTML = `
-    <div class="doctor-cards-header">
-      <span class="dch-icon">🔍</span>
-      <span class="dch-title">Matching Specialists — <strong>${deptNames.length} departments</strong></span>
-      <span class="dch-badges">
-        <span class="badge-total">${totalDocs} doctors</span>
-        ${todayCount > 0 ? `<span class="badge-today">🟢 ${todayCount} today</span>` : ""}
-      </span>
-    </div>
-    ${subSpecLine}
-    <div class="doctor-cards-scroll">${cardsHtml}</div>
-  `;
-  containerEl.appendChild(wrapper);
-  requestAnimationFrame(() => requestAnimationFrame(() => wrapper.classList.add("visible")));
-}
-
 // ─── RENDER: DEPARTMENT DOCTORS ──────────────────────────────────────────────
 function renderDeptDoctors(department, doctors, containerEl, sub_specialty) {
   const todayDocs = doctors.filter(d => isDoctorAvailableToday(d.opd_days));
@@ -483,12 +435,12 @@ function startDoctorSearch() {
 
 // ── TILE 3: Department Picker ─────────────────────────────────
 const DEPARTMENTS = [
-  "Medicine (General)", "Paediatrics (Children)", "Surgery (General)",
+  "Medicine (General)", "Paediatrics Medicine (Children)", "Surgery (General)",
   "Obstetrics & Gynaecology", "Orthopaedics (Bones & Joints)",
   "Dermatology & Venereology (Skin)", "Otorhinolaryngology - ENT",
   "Psychiatry (Mental Health)", "Urology (Kidney & Urinary)",
   "Gastroenterology (Stomach & Digestion)", "G.I. Surgery (Stomach Surgery)",
-  "Nephrology (Kidney Disease)", "Endocrinology (Diabetes & Hormones)",
+  "Nephrology", "Endocrinology (Diabetes & Hormones)",
   "Geriatric Medicine (Elderly Care)", "Rheumatology (Joint & Autoimmune)",
   "Physical Medicine & Rehabilitation", "Haematology (Blood Disorders)",
   "Burns & Plastic Surgery", "Paediatric Surgery (Children Surgery)",
@@ -509,7 +461,7 @@ function showDeptPicker() {
     </button>
   `).join('');
   overlay.classList.add('active');
-  fetch('/departments').then(r => r.json()).then(data => {
+  fetch(`${BACKEND_BASE}/departments`).then(r => r.json()).then(data => {
     data.departments.forEach(d => {
       const el = document.getElementById('today-' + d.name.replace(/[^a-zA-Z]/g,''));
       if (el && d.available_today > 0) el.textContent = '🟢 ' + d.available_today + ' today';

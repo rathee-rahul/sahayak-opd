@@ -169,7 +169,7 @@ REMEMBER: Output ONLY valid JSON. No preamble. No explanation. No markdown fence
 
 def build_extractor_messages(sanitized_input: str, history: list) -> list:
     messages = []
-    recent_history = history[-4:] if len(history) > 4 else history
+    recent_history = history[-4:]
     for msg in recent_history:
         messages.append({"role": msg["role"], "content": msg["content"]})
     messages.append({"role": "user", "content": sanitized_input})

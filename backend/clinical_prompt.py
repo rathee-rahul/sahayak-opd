@@ -80,7 +80,7 @@ OUTPUT FORMAT — EXACTLY THIS JSON, NOTHING ELSE:
   "final_dept": "Exact department name or null",
   "severity": "emergency | urgent | routine | selfcare",
   "confidence": integer 0-100,
-  "agree": true or false,
+  "python_correct": true or false,
   "reason": "1-2 line Hinglish explanation WHY this department (for patient)",
   "action_advice": "Specific action — e.g. 'Aaj hi OPD visit karein' or 'Appointment lijiye'",
   "follow_up_needed": true or false,
@@ -204,10 +204,10 @@ OVERRIDE Python if clearly wrong:
 - elderly (65+) multiple issues → consider Geriatric Medicine
 
 AGREE with Python when top3[0] is reasonable:
-→ set agree = true, use top3[0]
+→ set python_correct = true, use top3[0]
 
 DISAGREE with Python when clearly wrong:
-→ set agree = false, set your better choice as final_dept
+→ set python_correct = false, set your better choice as final_dept
 → explain briefly in reason
 
 ════════════════════════════════════════
@@ -277,7 +277,7 @@ Engine: top3=[Cardiology(22), Pulmonary(9)], gap=59%, severity=urgent, features:
   "final_dept": "Cardiology (Heart)",
   "severity": "urgent",
   "confidence": 85,
-  "agree": true,
+  "python_correct": true,
   "reason": "Chest pain aur dhadkan ki takleef dil se related ho sakti hai",
   "action_advice": "Aaj hi OPD visit karein — kal tak mat roko.",
   "follow_up_needed": false,
@@ -292,7 +292,7 @@ Engine: is_emergency=true, features: chest pain + behosh, severity=emergency
   "final_dept": "Casualty / Emergency",
   "severity": "emergency",
   "confidence": 100,
-  "agree": true,
+  "python_correct": true,
   "reason": "Chest pain aur behoshi emergency signs hain",
   "action_advice": "TURANT Casualty jaayein — deri bilkul mat karein!",
   "follow_up_needed": false,
@@ -307,7 +307,7 @@ Engine: is_selfcare=true, features: fever, mild, 1 din, age=28, male
   "final_dept": null,
   "severity": "selfcare",
   "confidence": 90,
-  "agree": true,
+  "python_correct": true,
   "reason": "Halka bukhar aksar apne aap theek ho jaata hai",
   "action_advice": "Ghar pe aaram karein. 3 din mein theek na ho toh OPD aayein.",
   "follow_up_needed": false,
@@ -322,7 +322,7 @@ Engine: top3=[Rheumatology(12), Orthopaedics(10)], gap=17%, features: joint pain
   "final_dept": null,
   "severity": "routine",
   "confidence": 55,
-  "agree": true,
+  "python_correct": true,
   "reason": "Joint pain Rheumatology ya Orthopaedics dono mein ho sakta hai",
   "action_advice": "Thodi aur jankari chahiye sahi department batane ke liye.",
   "follow_up_needed": true,
@@ -337,7 +337,7 @@ Engine: top3=[Orthopaedics(15), Rheumatology(12)], gap=20%, features: bilateral 
   "final_dept": "Rheumatology (Joint & Autoimmune)",
   "severity": "routine",
   "confidence": 80,
-  "agree": false,
+  "python_correct": false,
   "reason": "Dono taraf joints mein dard aur subah ki akaavat Rheumatology ki taraf zyada point karta hai",
   "action_advice": "OPD mein appointment lijiye.",
   "follow_up_needed": false,
@@ -352,7 +352,7 @@ Engine: features: chest pain, age=null, gender=null, is_emergency=false
   "final_dept": null,
   "severity": "routine",
   "confidence": 0,
-  "agree": true,
+  "python_correct": true,
   "reason": null,
   "action_advice": null,
   "follow_up_needed": true,
@@ -367,7 +367,7 @@ Engine: top3=[Pulmonary(14), Cardiology(11)], gap=21%, follow_up_count=2
   "final_dept": "Pulmonary Medicine",
   "severity": "routine",
   "confidence": 65,
-  "agree": true,
+  "python_correct": true,
   "reason": "Symptoms ke basis par Pulmonary Medicine most likely lag raha hai",
   "action_advice": "OPD mein appointment lijiye.",
   "follow_up_needed": false,
@@ -382,7 +382,7 @@ Engine: context_flags.needs_doctor_name=true
   "final_dept": null,
   "severity": "routine",
   "confidence": 100,
-  "agree": true,
+  "python_correct": true,
   "reason": null,
   "action_advice": null,
   "follow_up_needed": false,
@@ -490,7 +490,7 @@ def parse_clinical_response(raw_response: str) -> dict:
         output.setdefault("final_dept", None)
         output.setdefault("severity", "routine")
         output.setdefault("confidence", 50)
-        output.setdefault("agree", True)
+        output.setdefault("python_correct", True)
         output.setdefault("reason", None)
         output.setdefault("action_advice", None)
         output.setdefault("follow_up_needed", False)
@@ -508,7 +508,7 @@ def parse_clinical_response(raw_response: str) -> dict:
             "final_dept":        None,
             "severity":          "routine",
             "confidence":        0,
-            "agree":             True,
+            "python_correct":    True,
             "reason":            None,
             "action_advice":     None,
             "follow_up_needed":  True,
@@ -579,7 +579,7 @@ if __name__ == "__main__":
         "final_dept": "Casualty / Emergency",
         "severity": "emergency",
         "confidence": 100,
-        "agree": true,
+        "python_correct": true,
         "reason": "Chest pain + palpitations emergency signs hain",
         "action_advice": "TURANT Casualty jaayein!",
         "follow_up_needed": false,
