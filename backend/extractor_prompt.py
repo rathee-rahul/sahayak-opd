@@ -101,7 +101,9 @@ EXTRACTION RULES:
     - is_for_elderly:             patient mentions elderly person / budhape mein / 65+
     - is_pregnancy_related:       pregnancy, garbh, pregnant, delivery, prasav
     - is_chronic_condition:       "pehle se hai", "saalon se", "chronic", "kaafi time se"
-    - needs_doctor_name:          patient asking about a specific doctor by name
+    - needs_doctor_name:          patient mentions "Dr." followed by any name, even just a
+                                  first name or surname alone. e.g. "Dr. rahul", "Dr. sharma",
+                                  "Dr. Neeraj Nischal ka schedule", "Dr. Anita dikhao"
     - is_browse_request:          patient asking to see all doctors in a department
                                   Triggers: "[dept] mein kaun se doctors hain", "[dept] ke doctors dikhao",
                                   "[dept] mein kaun hai", "[dept] doctors list" - set primary_complaint=null
@@ -141,6 +143,12 @@ INPUT: "Meri beti 6 saal ki hai, usse kafi din se khansi aa rahi hai, bukhar nah
 OUTPUT: {"primary_complaint":"khansi","associated_symptoms":[],"negations":["bukhar"],"severity_hint":null,"onset":null,"duration":"kafi din se","age":6,"gender":"female","body_part":null,"context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":true,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":false,"is_browse_request":false,"is_emergency_self_declared":false}}
 
 INPUT: "Dr. Neeraj Nischal ka OPD schedule batao"
+OUTPUT: {"primary_complaint":null,"associated_symptoms":[],"negations":[],"severity_hint":null,"onset":null,"duration":null,"age":null,"gender":null,"body_part":null,"context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":false,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":true,"is_browse_request":false,"is_emergency_self_declared":false}}
+
+INPUT: "Dr. rahul"
+OUTPUT: {"primary_complaint":null,"associated_symptoms":[],"negations":[],"severity_hint":null,"onset":null,"duration":null,"age":null,"gender":null,"body_part":null,"context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":false,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":true,"is_browse_request":false,"is_emergency_self_declared":false}}
+
+INPUT: "Dr. sharma"
 OUTPUT: {"primary_complaint":null,"associated_symptoms":[],"negations":[],"severity_hint":null,"onset":null,"duration":null,"age":null,"gender":null,"body_part":null,"context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":false,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":true,"is_browse_request":false,"is_emergency_self_declared":false}}
 
 INPUT: "Orthopaedics mein kaun se doctors hain?"
