@@ -162,13 +162,91 @@ def search_by_condition(query: str, preferred_dept: str = None) -> list:
     return results
 
 
+# ── Hindi → Roman transliteration ────────────────────────────────────────────
+# Converts Devanagari voice transcriptions to approximate English phonetics
+# so fuzzy matching works against English doctor names in the database.
+# e.g. "शर्मा" → "shrma" which fuzzy-matches "sharma" at 80%
+
+_CONSONANTS = {
+    'क':'k','ख':'kh','ग':'g','घ':'gh','ङ':'ng',
+    'च':'ch','छ':'chh','ज':'j','झ':'jh','ञ':'n',
+    'ट':'t','ठ':'th','ड':'d','ढ':'dh','ण':'n',
+    'त':'t','थ':'th','द':'d','ध':'dh','न':'n',
+    'प':'p','फ':'f','ब':'b','भ':'bh','म':'m',
+    'य':'y','र':'r','ल':'l','व':'v',
+    'श':'sh','ष':'sh','स':'s','ह':'h',
+    'ड़':'r','ढ़':'rh',
+}
+_VOWELS = {
+    'अ':'a','आ':'a','इ':'i','ई':'i','उ':'u','ऊ':'u',
+    'ए':'e','ऐ':'ai','ओ':'o','औ':'au','ऋ':'ri','ऑ':'o',
+}
+_MATRAS = {
+    'ा':'a','ि':'i','ी':'i','ु':'u','ू':'u',
+    'े':'e','ै':'ai','ो':'o','ौ':'au','ृ':'ri',
+    'ं':'n','ः':'','ँ':'n',
+}
+_VIRAMA = '्'
+
+
+def transliterate_hindi(text: str) -> str:
+    """
+    Devanagari → approximate Roman phonetics for fuzzy name matching.
+    Not perfect but scores 65-100% fuzzy match against real English spellings.
+    Returns original text unchanged if it contains no Devanagari characters.
+    """
+    if not any('\u0900' <= ch <= '\u097F' for ch in text):
+        return text  # already Roman/English — skip
+
+    out = []
+    chars = list(text)
+    i, n = 0, len(chars)
+
+    while i < n:
+        ch = chars[i]
+        if ch in _VOWELS:
+            out.append(_VOWELS[ch]); i += 1
+        elif ch in _CONSONANTS:
+            roman = _CONSONANTS[ch]; i += 1
+            if i < n and chars[i] == _VIRAMA:
+                out.append(roman); i += 1          # virama: no inherent 'a'
+            elif i < n and chars[i] in _MATRAS:
+                out.append(roman + _MATRAS[chars[i]]); i += 1
+            elif i < n and chars[i] in _CONSONANTS:
+                out.append(roman)                   # consonant cluster: no 'a'
+            else:
+                out.append(roman + 'a')             # inherent 'a'
+        elif ch in _MATRAS:
+            out.append(_MATRAS[ch]); i += 1
+        elif ch == _VIRAMA:
+            i += 1
+        elif ch == ' ':
+            out.append(' '); i += 1
+        elif ord(ch) < 128:
+            out.append(ch.lower()); i += 1
+        else:
+            i += 1  # skip unknown unicode
+
+    import re as _re
+    return _re.sub(r'\s+', ' ', ''.join(out)).strip().lower()
+
+
 def search_doctor_by_name(query: str, hint_dept: str = None):
-    query = query.lower().strip()
+    # Transliterate Hindi voice input to Roman for fuzzy matching
+    query_roman = transliterate_hindi(query.strip())
+    query_lower = query_roman.lower()
+
     results = []
     for dept, doctors in DOCTOR_DATA.items():
         for doc in doctors:
-            similarity = fuzz.partial_ratio(query, doc["name"].lower())
-            if similarity >= 75:
+            doc_name_lower = doc["name"].lower()
+            # Remove "Dr." / "Prof." prefix for cleaner matching
+            doc_name_clean = re.sub(r'^(dr\.?|prof\.?)\s*', '', doc_name_lower).strip()
+            similarity = max(
+                fuzz.partial_ratio(query_lower, doc_name_lower),
+                fuzz.partial_ratio(query_lower, doc_name_clean),
+            )
+            if similarity >= 65:  # lowered from 75 — transliteration is approx
                 score = similarity + (10 if hint_dept and dept == hint_dept else 0)
                 results.append({"dept": dept, "doctor": doc, "score": score})
     results.sort(key=lambda x: -x["score"])
