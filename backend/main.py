@@ -258,6 +258,7 @@ class ChatRequest(BaseModel):
     denied_symptoms:    list = []
     follow_up_count:    int  = 0
     session_id:         str  = ""
+    active_intent:      str  = ""   # "doctor_schedule" | "browse_department" | ""
 
 
 # ══════════════════════════════════════════════════════════════
@@ -293,6 +294,7 @@ async def chat(request: ChatRequest):
     denied_symptoms    = request.denied_symptoms    or []
     follow_up_count    = request.follow_up_count    or 0
     session_id         = request.session_id         or ""
+    active_intent      = request.active_intent      or ""
 
     # ── STEP 1: PII Scrub ─────────────────────────────────────
     sanitized = sanitize_input(raw_message)
@@ -367,6 +369,15 @@ async def chat(request: ChatRequest):
     needs_doctor  = context_flags.get("needs_doctor_name", False)
     is_browse     = context_flags.get("is_browse_request", False)
 
+    # ── ACTIVE INTENT OVERRIDE ────────────────────────────────
+    # Frontend sends active_intent when user is in Tile 2 (doctor search) mode.
+    # This catches cases where extractor LLM misses needs_doctor_name=true
+    # (e.g. user types just a name without "Dr." prefix).
+    if active_intent == "doctor_schedule":
+        needs_doctor = True
+    elif active_intent == "browse_department":
+        is_browse = True
+
     # ── BROWSE OVERRIDE ──────────────────────────────────────
     if is_browse:
         python_browse_dept = extract_browse_dept(sanitized)
@@ -377,6 +388,7 @@ async def chat(request: ChatRequest):
     doctor_results = []
     dept_doctors   = []
     ambiguous      = False
+    doctor_query   = None
 
     if needs_doctor:
         # ── BUG D FIX: added ,| to regex so "Dr. X, Dept" also matches ──
@@ -390,6 +402,13 @@ async def chat(request: ChatRequest):
             doctor_results = [{"dept": m["dept"], "doctor": m["doctor"]} for m in matches]
             unique_names   = set(m["doctor"]["name"] for m in matches)
             ambiguous      = len(unique_names) > 1 and len(doctor_query.split()) <= 1
+        else:
+            # Doctor not found — override reply so user knows to try again
+            clinical["reply"] = (
+                f"\"{ doctor_query.title() }\" naam ke doctor AIIMS OPD database mein nahi mile. "
+                "Kripya poora naam likhein — jaise \"Dr. Anita Dhar\" ya \"Dr. Sharma\"."
+            )
+            print(f"[Doctor] Not found: {doctor_query}")
 
     elif is_browse and final_dept:
         all_docs = DOCTOR_DATA.get(final_dept, [])
@@ -438,6 +457,7 @@ async def chat(request: ChatRequest):
 
         "doctors":        dept_doctors,
         "doctor_results": doctor_results,
+        "doctor_query":   doctor_query,
         "ambiguous":      ambiguous,
 
         "debug": {
