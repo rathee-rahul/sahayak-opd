@@ -71,9 +71,6 @@ with open(DOCTOR_DATA_PATH, "r", encoding="utf-8") as f:
     DOCTOR_DATA = json.load(f)
 
 # ── REFERRAL-REQUIRED DEPARTMENTS ────────────────────────────
-# These are AIIMS super-specialty departments.
-# Patients need a referral slip from a primary department first.
-# Source: AIIMS notice board + confirmed by user (March 2026)
 REFERRAL_REQUIRED_DEPTS = {
     "Cardiology (Heart)",
     "Neurology (Brain & Nerves)",
@@ -91,9 +88,6 @@ REFERRAL_REQUIRED_DEPTS = {
 from departments import DEPARTMENTS
 
 # ── BROWSE DEPARTMENT EXTRACTOR ───────────────────────────────
-# Pure Python fuzzy match — used when is_browse_request=true
-# Prevents LLM from routing to wrong dept on browse queries
-
 def extract_browse_dept(message: str) -> str | None:
     """
     Extract department name from a browse query using fuzzy matching.
@@ -113,8 +107,6 @@ def extract_browse_dept(message: str) -> str | None:
             fuzz.token_set_ratio(msg_lower, short_name),
             fuzz.partial_ratio(msg_lower, short_name),
         )
-        # Tiebreak: prefer longer dept name (more specific)
-        # e.g. "G.I. Surgery" wins over "Surgery" at same score
         if score > best_score or (
             score == best_score and best_dept and len(dept) > len(best_dept)
         ):
@@ -122,6 +114,8 @@ def extract_browse_dept(message: str) -> str | None:
             best_dept  = dept
 
     return best_dept if best_score >= 60 else None
+
+
 TODAY_NAME = datetime.now().strftime("%A")
 TODAY_VARIANTS = {
     "Monday":    ["mon", "monday"],
@@ -171,17 +165,10 @@ def search_by_condition(query: str, preferred_dept: str = None) -> list:
 def search_doctor_by_name(query: str, hint_dept: str = None):
     query = query.lower().strip()
     results = []
-    # Lower threshold for short queries (typos like 'kmal' for 'kamal').
-    # Short inputs need token_set_ratio which handles missing/extra chars better.
-    threshold = 60 if len(query) <= 5 else 75
     for dept, doctors in DOCTOR_DATA.items():
         for doc in doctors:
-            name_lower = doc["name"].lower()
-            similarity = max(
-                fuzz.partial_ratio(query, name_lower),
-                fuzz.token_set_ratio(query, name_lower),
-            )
-            if similarity >= threshold:
+            similarity = fuzz.partial_ratio(query, doc["name"].lower())
+            if similarity >= 75:
                 score = similarity + (10 if hint_dept and dept == hint_dept else 0)
                 results.append({"dept": dept, "doctor": doc, "score": score})
     results.sort(key=lambda x: -x["score"])
@@ -221,7 +208,6 @@ def _sort_jpnatc_last(doctors: list) -> list:
 
 def call_llm(system_prompt: str, messages: list, max_tokens: int = 512, label: str = "") -> str:
     """Groq primary → Cerebras fallback. Returns raw JSON string."""
-    # PRIMARY: Groq
     try:
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
@@ -235,7 +221,6 @@ def call_llm(system_prompt: str, messages: list, max_tokens: int = 512, label: s
     except Exception as e:
         print(f"[LLM:{label}] Groq failed: {e} → Cerebras")
 
-    # FALLBACK: Cerebras
     try:
         response = cerebras_client.chat.completions.create(
             model="llama3.1-8b",
@@ -269,12 +254,10 @@ async def call_llm_async(
 class ChatRequest(BaseModel):
     message:            str
     history:            list = []
-    # v8 conversation state — frontend tracks and sends back each turn
     confirmed_symptoms: list = []
     denied_symptoms:    list = []
     follow_up_count:    int  = 0
     session_id:         str  = ""
-    active_intent:      str | None = ""  # frontend tile hint: 'doctor_schedule' | 'browse_department' | ''
 
 
 # ══════════════════════════════════════════════════════════════
@@ -310,7 +293,6 @@ async def chat(request: ChatRequest):
     denied_symptoms    = request.denied_symptoms    or []
     follow_up_count    = request.follow_up_count    or 0
     session_id         = request.session_id         or ""
-    active_intent      = (request.active_intent     or "").strip()
 
     # ── STEP 1: PII Scrub ─────────────────────────────────────
     sanitized = sanitize_input(raw_message)
@@ -367,7 +349,6 @@ async def chat(request: ChatRequest):
     clinical = parse_clinical_response(llm2_raw)
 
     # ── STEP 5b: Safety override — engine emergency wins ──────
-    # Python emergency is hardcoded — LLM 2 can NEVER undo it
     if engine_output["is_emergency"] and clinical.get("final_dept") != "Casualty / Emergency":
         print("[Safety] Engine emergency overrides LLM 2")
         clinical["final_dept"]       = "Casualty / Emergency"
@@ -396,51 +377,21 @@ async def chat(request: ChatRequest):
     needs_doctor  = context_flags.get("needs_doctor_name", False)
     is_browse     = context_flags.get("is_browse_request", False)
 
-    # ── FRONTEND TILE OVERRIDE ────────────────────────────────────
-    # If the frontend signals the user is in doctor-search mode,
-    # trust that over the LLM extractor (which may misread short/typo inputs).
-    if active_intent == "doctor_schedule":
-        needs_doctor = True
-        is_browse    = False
-    elif active_intent == "browse_department":
-        is_browse    = True
-        needs_doctor = False
-
-    # ── BROWSE OVERRIDE — Python wins over LLM for dept detection ──
-    # LLM often routes browse queries to wrong dept via symptom scoring.
-    # Extract dept directly from message using fuzzy match.
+    # ── BROWSE OVERRIDE ──────────────────────────────────────
     if is_browse:
         python_browse_dept = extract_browse_dept(sanitized)
         if python_browse_dept:
-            old_dept   = final_dept
             final_dept = python_browse_dept
-            # If Python corrected the dept, also patch the reply text so the
-            # chat bubble matches the doctor card (fixes 'Medicine (General)'
-            # appearing in reply while the correct dept card is shown).
-            if old_dept != final_dept:
-                reply_text = clinical.get("reply", "")
-                if old_dept and old_dept in reply_text:
-                    clinical["reply"] = reply_text.replace(old_dept, final_dept)
-                else:
-                    short = final_dept.split("(")[0].strip()
-                    clinical["reply"] = (
-                        f"Aapne {short} ke liye browse kiya hai. "
-                        f"Is department ke doctors ki list neeche dekh skte hain. "
-                        f"OPD mein appointment lijiye."
-                    )
-                print(f"[Browse] Python overrode dept: {old_dept!r} -> {final_dept!r}")
-            else:
-                print(f"[Browse] Python confirmed dept: {final_dept}")
+            print(f"[Browse] Python extracted dept: {final_dept}")
 
     doctor_results = []
     dept_doctors   = []
     ambiguous      = False
-    doctor_query   = None
 
     if needs_doctor:
-        # Extract doctor name from sanitized input
+        # ── BUG D FIX: added ,| to regex so "Dr. X, Dept" also matches ──
         name_match = re.search(
-            r'\bdr\.?\s+([a-z][a-z\s]{2,30}?)(?:\s+ka|\s+ke|\s+ki|\s+kab|\s+ka\s|\?|$)',
+            r'\bdr\.?\s+([a-z][a-z\s]{2,30}?)(?:\s+ka|\s+ke|\s+ki|\s+kab|\s+ka\s|,|\?|$)',
             sanitized.lower()
         )
         doctor_query = name_match.group(1).strip() if name_match else sanitized
@@ -459,7 +410,7 @@ async def chat(request: ChatRequest):
         dept_doctors = todays_main + others_main + jpnatc_docs
 
     elif is_emergency or is_selfcare:
-        dept_doctors = []   # No doctor cards for emergency or self-care
+        dept_doctors = []
 
     elif final_dept:
         dept_doctors = fetch_doctors_for_dept(final_dept, sanitized)
@@ -480,7 +431,6 @@ async def chat(request: ChatRequest):
     new_follow_up_count = follow_up_count + (1 if clinical.get("follow_up_needed") else 0)
 
     return {
-        # Core reply
         "reply":          clinical.get("reply", ""),
         "disclaimer":     clinical.get("disclaimer", "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge."),
         "department":     final_dept,
@@ -488,23 +438,18 @@ async def chat(request: ChatRequest):
         "action_advice":  clinical.get("action_advice"),
         "reason":         clinical.get("reason"),
 
-        # Follow-up state — frontend must track and send back next turn
         "follow_up_needed":   clinical.get("follow_up_needed", False),
         "follow_up_question": clinical.get("follow_up_question"),
         "follow_up_count":    new_follow_up_count,
 
-        # Flags
         "is_emergency":     is_emergency,
         "is_selfcare":      is_selfcare,
         "referral_required": referral_required,
 
-        # Doctors
         "doctors":        dept_doctors,
         "doctor_results": doctor_results,
-        "doctor_query":   doctor_query if needs_doctor else None,
         "ambiguous":      ambiguous,
 
-        # Debug (remove in prod if needed)
         "debug": {
             "python_top3":    engine_output.get("top3"),
             "confidence_gap": engine_output.get("confidence_gap"),
@@ -513,7 +458,6 @@ async def chat(request: ChatRequest):
             "pii_scrubbed":   was_sanitized(raw_message, sanitized),
         },
 
-        # Legacy fields for frontend compatibility
         "today":  TODAY_NAME,
         "intent": (
             "emergency"         if is_emergency else

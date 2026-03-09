@@ -1,12 +1,12 @@
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const BACKEND_URL = "https://sahayak-opd.onrender.com/chat";
- 
+
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let conversationHistory = [];
 let isRecording = false;
 let recognition = null;
 let activeIntent = null;   // tracks which tile the user activated
- 
+
 // ─── TODAY DETECTION ──────────────────────────────────────────────────────────
 const TODAY_NAME = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()];
 const TODAY_VARIANTS = {
@@ -18,36 +18,36 @@ const TODAY_VARIANTS = {
   Saturday:  ["sat", "saturday"],
   Sunday:    ["sun", "sunday"],
 };
- 
+
 function isDoctorAvailableToday(opd_days) {
   if (!opd_days) return false;
   const lower = opd_days.toLowerCase();
   return (TODAY_VARIANTS[TODAY_NAME] || []).some(v => lower.includes(v));
 }
- 
+
 // ─── SEND MESSAGE ─────────────────────────────────────────────────────────────
 async function sendMessage(messageText) {
   const input = document.getElementById("chatInput");
   const text  = messageText || input.value.trim();
   if (!text) return;
- 
+
   input.value = "";
   appendMessage("user", text);
   conversationHistory.push({ role: "user", content: text });
- 
+
   const typingEl = showTypingIndicator();
- 
+
   try {
     // If user is in doctor-search mode, ensure backend treats input as a name query.
-  // Prepend 'Dr.' only for plain name inputs — not for resolved disambiguation
-  // messages (which contain a comma) and not if prefix already present.
-  let messageToSend = text;
-  const isResolvedDisambig = text.includes(',');  // e.g. 'Dr. Rahul Yadav, Dental Surgery'
-  if (activeIntent === 'doctor_schedule' && !text.toLowerCase().startsWith('dr') && !isResolvedDisambig) {
-    messageToSend = 'Dr. ' + text;
-  }
+    // Prepend 'Dr.' only for plain name inputs — not for resolved disambiguation
+    // messages (which contain a comma) and not if prefix already present.
+    let messageToSend = text;
+    const isResolvedDisambig = text.includes(',');  // e.g. 'Dr. Rahul Yadav, Dental Surgery'
+    if (activeIntent === 'doctor_schedule' && !text.toLowerCase().startsWith('dr') && !isResolvedDisambig) {
+      messageToSend = 'Dr. ' + text;
+    }
 
-  const res = await fetch(BACKEND_URL, {
+    const res = await fetch(BACKEND_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -56,16 +56,21 @@ async function sendMessage(messageText) {
         active_intent: activeIntent || "",
       }),
     });
- 
+
     const data = await res.json();
     removeTypingIndicator(typingEl);
-    // Reset intent after every response — user must click a tile again to re-activate
-    if (data.intent && data.intent !== 'doctor_schedule') activeIntent = null;
- 
+
+    // FIX 1: Keep doctor_schedule intent alive across disambiguation turns.
+    // Old code reset activeIntent if data.intent !== 'doctor_schedule', which
+    // cleared it even after an ambiguous result — breaking the resolve click.
+    if (data.intent && data.intent !== 'doctor_schedule' && !data.ambiguous) {
+      activeIntent = null;
+    }
+
     if (data.is_emergency) appendEmergencyAlert();
- 
+
     const msgWrapper = appendMessage("bot", data.reply);
- 
+
     if (data.doctor_query && data.doctor_results && data.doctor_results.length > 0) {
       if (data.ambiguous) {
         renderAmbiguousResults(data.doctor_query, data.doctor_results, msgWrapper);
@@ -73,31 +78,31 @@ async function sendMessage(messageText) {
         renderNameSearchResults(data.doctor_query, data.doctor_results, msgWrapper);
       }
     }
- 
-    // Cross-department condition matches (e.g. hyperactivity found in Paediatrics + Psychiatry)
+
+    // Cross-department condition matches
     if (!data.doctor_query && data.condition_matches && data.condition_matches.length > 0) {
       renderConditionMatches(data.condition_matches, data.sub_specialty, msgWrapper);
     } else if (!data.doctor_query && data.department && data.doctors && data.doctors.length > 0) {
       renderDeptDoctors(data.department, data.doctors, msgWrapper, data.sub_specialty);
     }
- 
+
     conversationHistory.push({ role: "assistant", content: data.reply });
- 
+
     speakText(data.reply);
- 
+
   } catch (err) {
     removeTypingIndicator(typingEl);
     appendMessage("bot", "माफ करें, कोई error आई। थोड़ी देर बाद try करें।");
     console.error(err);
   }
 }
- 
+
 // ─── FILL INPUT (for quick chips) ─────────────────────────────────────────────
 function fillInput(text) {
   const input = document.getElementById("chatInput");
   if (input) { input.value = text; input.focus(); }
 }
- 
+
 // ─── RENDER: SPECIFIC DOCTOR NAME SEARCH ──────────────────────────────────────
 function renderNameSearchResults(query, results, containerEl) {
   const wrapper = document.createElement("div");
@@ -121,22 +126,33 @@ function renderNameSearchResults(query, results, containerEl) {
   containerEl.appendChild(wrapper);
   requestAnimationFrame(() => requestAnimationFrame(() => wrapper.classList.add("visible")));
 }
- 
+
 // ─── RENDER: AMBIGUOUS DOCTOR ────────────────────────────────────────────────
+// FIX 2: Store disambig results in a global Map instead of embedding JSON in
+// onclick attributes. This completely avoids the apostrophe/quote HTML-breaking bug.
+// Any doctor with "Women's Clinic", "Parkinson's", etc. in their data was causing
+// broken onclick JS because encodeURIComponent does NOT encode single quotes.
+
+const _disambigStore = {};  // key: unique id, value: results array
+
 function renderAmbiguousResults(query, results, containerEl) {
+  // Store results under a unique key so onclick doesn't need to embed JSON
+  const storeKey = 'disambig_' + Date.now();
+  _disambigStore[storeKey] = results;
+
   const wrapper = document.createElement("div");
   wrapper.className = "doctor-cards-wrapper";
   wrapper.innerHTML = `
     <div class="doctor-cards-header ambiguous-header">
       <span class="dch-icon">⚠️</span>
-      <span class="dch-title">Multiple doctors found for <strong>"${query}"</strong> — please confirm department:</span>
+      <span class="dch-title">Multiple doctors found for <strong>"${query}"</strong> — please confirm:</span>
     </div>
     <div class="disambig-list">
       ${results.map((r, i) => `
-        <button class="disambig-btn" onclick="resolveDoctor(${i}, '${encodeURIComponent(JSON.stringify(results))}')">
+        <button class="disambig-btn" onclick="resolveDoctor(${i}, '${storeKey}')">
           <span class="disambig-dept">${r.dept}</span>
           <span class="disambig-name">${r.doctor.name}</span>
-          <span class="disambig-days">${r.doctor.opd_days || "Days TBC"}</span>
+          <span class="disambig-days">${(r.doctor.opd_days || "Days TBC").replace(/'/g, "\u2019")}</span>
         </button>
       `).join("")}
     </div>
@@ -144,17 +160,25 @@ function renderAmbiguousResults(query, results, containerEl) {
   containerEl.appendChild(wrapper);
   requestAnimationFrame(() => requestAnimationFrame(() => wrapper.classList.add("visible")));
 }
- 
-function resolveDoctor(index, encodedResults) {
-  const results = JSON.parse(decodeURIComponent(encodedResults));
-  const chosen  = results[index];
-  activeIntent = 'doctor_schedule';  // keep intent so backend routes as doctor search
+
+// FIX 2 cont: resolveDoctor now reads from the global store, not from encoded HTML attr
+function resolveDoctor(index, storeKey) {
+  const results = _disambigStore[storeKey];
+  if (!results) {
+    console.error('resolveDoctor: results not found for key', storeKey);
+    return;
+  }
+  const chosen = results[index];
+  // FIX 3: Set activeIntent BEFORE sendMessage so the backend receives it
+  activeIntent = 'doctor_schedule';
+  // Send "Name, Dept" format — backend handles this as a resolved disambiguation
   sendMessage(`${chosen.doctor.name}, ${chosen.dept}`);
+  // Clean up store entry after use
+  delete _disambigStore[storeKey];
 }
- 
+
 // ─── RENDER: CROSS-DEPARTMENT CONDITION MATCHES ──────────────────────────────
 function renderConditionMatches(matches, sub_specialty, containerEl) {
-  // Group matches by department
   const byDept = {};
   matches.forEach(m => {
     if (!byDept[m.dept]) byDept[m.dept] = [];
@@ -172,7 +196,6 @@ function renderConditionMatches(matches, sub_specialty, containerEl) {
     ? `<div class="dch-subspecialty">🔎 Matching doctors for: <strong>${sub_specialty}</strong></div>`
     : "";
 
-  // Build cards grouped by department
   let cardsHtml = "";
   deptNames.forEach(dept => {
     const docs = byDept[dept];
@@ -200,7 +223,6 @@ function renderConditionMatches(matches, sub_specialty, containerEl) {
 }
 
 // ─── RENDER: DEPARTMENT DOCTORS ──────────────────────────────────────────────
-// ── KEY FIX: accepts optional sub_specialty to show filtered context in header ──
 function renderDeptDoctors(department, doctors, containerEl, sub_specialty) {
   const todayDocs = doctors.filter(d => isDoctorAvailableToday(d.opd_days));
   const otherDocs = doctors.filter(d => !isDoctorAvailableToday(d.opd_days));
@@ -208,7 +230,6 @@ function renderDeptDoctors(department, doctors, containerEl, sub_specialty) {
   const wrapper   = document.createElement("div");
   wrapper.className = "doctor-cards-wrapper";
 
-  // If sub_specialty filtered results, show a subtitle line
   const subSpecLine = sub_specialty
     ? `<div class="dch-subspecialty">🔎 Filtered for: <strong>${sub_specialty}</strong></div>`
     : "";
@@ -230,7 +251,7 @@ function renderDeptDoctors(department, doctors, containerEl, sub_specialty) {
   containerEl.appendChild(wrapper);
   requestAnimationFrame(() => requestAnimationFrame(() => wrapper.classList.add("visible")));
 }
- 
+
 // ─── BUILD SINGLE DOCTOR CARD ────────────────────────────────────────────────
 function buildCard(doc, dept) {
   const isToday = isDoctorAvailableToday(doc.opd_days);
@@ -271,7 +292,7 @@ function buildCard(doc, dept) {
     </div>
   `;
 }
- 
+
 // ─── EMERGENCY ALERT ─────────────────────────────────────────────────────────
 function appendEmergencyAlert() {
   const chat = document.getElementById("chatArea");
@@ -288,7 +309,7 @@ function appendEmergencyAlert() {
   chat.appendChild(el);
   chat.scrollTop = chat.scrollHeight;
 }
- 
+
 // ─── CHAT HELPERS ─────────────────────────────────────────────────────────────
 function appendMessage(role, text) {
   const chat = document.getElementById("chatArea");
@@ -302,14 +323,14 @@ function appendMessage(role, text) {
   chat.scrollTop = chat.scrollHeight;
   return wrapper;
 }
- 
+
 function formatMessage(text) {
   return text
     .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.*?)\*/g, "<em>$1</em>")
     .replace(/\n/g, "<br>");
 }
- 
+
 function showTypingIndicator() {
   const chat = document.getElementById("chatArea");
   const el = document.createElement("div");
@@ -324,9 +345,9 @@ function showTypingIndicator() {
   chat.scrollTop = chat.scrollHeight;
   return el;
 }
- 
+
 function removeTypingIndicator(el) { el?.remove(); }
- 
+
 // ─── VOICE INPUT ─────────────────────────────────────────────────────────────
 function toggleVoice() {
   if (!("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
@@ -334,14 +355,14 @@ function toggleVoice() {
     return;
   }
   if (isRecording) { recognition?.stop(); return; }
- 
+
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   recognition = new SR();
   recognition.lang = "hi-IN";
   recognition.interimResults = false;
- 
+
   const overlay = document.getElementById("voiceOverlay");
- 
+
   recognition.onstart = () => {
     isRecording = true;
     if (overlay) overlay.style.display = "flex";
@@ -367,10 +388,8 @@ function toggleVoice() {
   };
   recognition.start();
 }
- 
+
 // ─── HINDI NUMBER CONVERTER ───────────────────────────────────────────────────
-// Converts Arabic numerals (0–999) in a string to Hindi spoken words,
-// so TTS says "das saal" instead of "ten saal", "pachaas" instead of "fifty", etc.
 function convertNumbersToHindi(text) {
   const ones = [
     "", "ek", "do", "teen", "chaar", "paanch",
@@ -406,11 +425,9 @@ function convertNumbersToHindi(text) {
       const prefix = h === 1 ? "ek sau" : ones[h] + " sau";
       return r === 0 ? prefix : prefix + " " + ones[r];
     }
-    // For larger numbers just return as-is (rare in medical context)
     return String(n);
   }
 
-  // Replace standalone numbers (not inside words) with Hindi equivalents
   return text.replace(/\b(\d+)\b/g, (match) => numToHindi(match));
 }
 
@@ -419,13 +436,11 @@ async function speakText(text) {
   if (!window.speechSynthesis) return;
   window.speechSynthesis.cancel();
 
-  // Clean text: remove markdown, HTML tags, emoji, and extra whitespace
-  // Then convert any remaining Arabic numerals to Hindi spoken words
   const plain = convertNumbersToHindi(
     text
       .replace(/[*_`#]/g, "")
       .replace(/<[^>]+>/g, "")
-      .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")  // strip emojis
+      .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")
       .replace(/\s+/g, " ")
       .trim()
   );
@@ -435,18 +450,12 @@ async function speakText(text) {
   const utt = new SpeechSynthesisUtterance(plain);
   utt.lang  = "hi-IN";
 
-  // Wait for voices to load if not ready yet
   let voices = window.speechSynthesis.getVoices();
   if (!voices.length) {
     await new Promise(r => setTimeout(r, 1000));
     voices = window.speechSynthesis.getVoices();
   }
 
-  // Voice priority:
-  // 1. Google हिन्दी (best quality, available on Chrome/Android)
-  // 2. Any hi-IN female voice
-  // 3. Any hi-IN voice
-  // 4. Fallback: en-IN female (sounds more natural than robotic en-US for Hinglish)
   const voice =
     voices.find(v => v.lang === "hi-IN" && /google/i.test(v.name)) ||
     voices.find(v => v.lang === "hi-IN" && /female|woman/i.test(v.name)) ||
@@ -455,16 +464,12 @@ async function speakText(text) {
     voices.find(v => v.lang === "en-IN");
 
   if (voice) utt.voice = voice;
-
-  // Confident, clear, professional tone:
-  // pitch 1.0 = neutral (not high/childlike), rate 0.88 = slightly slower = authoritative
-  utt.pitch  = 1.0;   // was 1.15 — lower = more confident, less chirpy
-  utt.rate   = 0.88;  // was 0.95 — slower = clearer, more professional
-  utt.volume = 1.0;   // full volume
+  utt.pitch  = 1.0;
+  utt.rate   = 0.88;
+  utt.volume = 1.0;
 
   window.speechSynthesis.speak(utt);
 }
- 
 
 // ── TILE 1: Symptom Flow ──────────────────────────────────────
 function startSymptomFlow() {
@@ -501,7 +506,7 @@ const DEPARTMENTS = [
 ];
 
 function showDeptPicker() {
-  activeIntent = null;  // clear doctor search mode when user opens dept picker
+  activeIntent = null;
   const overlay = document.getElementById('deptPickerOverlay');
   const grid = document.getElementById('deptPickerGrid');
   grid.innerHTML = DEPARTMENTS.map((dept, i) => `
@@ -511,7 +516,6 @@ function showDeptPicker() {
     </button>
   `).join('');
   overlay.classList.add('active');
-  // Load today counts from backend
   fetch('/departments').then(r => r.json()).then(data => {
     data.departments.forEach(d => {
       const el = document.getElementById('today-' + d.name.replace(/[^a-zA-Z]/g,''));
@@ -528,7 +532,7 @@ function closeDeptPicker(e) {
 
 function selectDepartment(dept) {
   document.getElementById('deptPickerOverlay').classList.remove('active');
-  activeIntent = null;  // clear any previous tile intent before browse
+  activeIntent = null;
   const msg = dept + ' mein kaun se doctors hain?';
   document.getElementById('chatInput').value = msg;
   sendMessage(msg);
@@ -538,13 +542,11 @@ function selectDepartment(dept) {
 function showEmergencyDirect() {
   const chat = document.getElementById('chatArea');
 
-  // User bubble
   const userRow = document.createElement('div');
   userRow.className = 'user-row';
   userRow.innerHTML = '<div class="user-bubble">🚨 Emergency & Helpline</div>';
   chat.appendChild(userRow);
 
-  // Emergency alert card — instant, no API call
   const el = document.createElement('div');
   el.className = 'emergency-alert';
   el.innerHTML = `
@@ -561,7 +563,6 @@ function showEmergencyDirect() {
   `;
   chat.appendChild(el);
 
-  // Bot follow-up message
   const botRow = document.createElement('div');
   botRow.className = 'bot-row';
   botRow.innerHTML = `
@@ -576,11 +577,10 @@ function showEmergencyDirect() {
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
-  // Preload voices immediately so they're ready when needed
   window.speechSynthesis?.getVoices();
   window.speechSynthesis?.addEventListener("voiceschanged", () => window.speechSynthesis.getVoices());
   setTimeout(() => window.speechSynthesis?.getVoices(), 1000);
- 
+
   document.getElementById("sendBtn")?.addEventListener("click", () => sendMessage());
   document.getElementById("chatInput")?.addEventListener("keydown", e => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
