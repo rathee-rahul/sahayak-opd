@@ -65,9 +65,8 @@ async function sendMessage(messageText) {
     // Reset intent after every response — user must click a tile again to re-activate
     if (data.intent && data.intent !== 'doctor_schedule') activeIntent = null;
  
-    if (data.is_emergency) appendEmergencyAlert();
- 
     const msgWrapper = appendMessage("bot", data.reply);
+    if (data.show_advisory) appendAdvisoryNote(msgWrapper);
  
     if (data.doctor_query && data.doctor_results && data.doctor_results.length > 0) {
       if (data.ambiguous) {
@@ -235,21 +234,15 @@ function buildCard(doc, dept) {
   `;
 }
  
-// ─── EMERGENCY ALERT ─────────────────────────────────────────────────────────
-function appendEmergencyAlert() {
-  const chat = document.getElementById("chatArea");
+// ─── SOFT ADVISORY NOTE ──────────────────────────────────────────────────────
+function appendAdvisoryNote(containerEl) {
   const el = document.createElement("div");
-  el.className = "emergency-alert";
+  el.className = "advisory-note";
   el.innerHTML = `
-    <div class="emergency-icon">🚨</div>
-    <div>
-      <strong>EMERGENCY — तुरंत जाएं!</strong><br>
-      Casualty / Emergency Block, New Delhi<br>
-      <small>24×7 उपलब्ध | Always open</small>
-    </div>
+    <span class="advisory-icon">ℹ️</span>
+    <span>Agar takleef achanak bahut badh jaaye ya saans lene mein dikkat ho — <strong>Casualty bhi 24×7 available hai.</strong></span>
   `;
-  chat.appendChild(el);
-  chat.scrollTop = chat.scrollHeight;
+  containerEl.appendChild(el);
 }
  
 // ─── CHAT HELPERS ─────────────────────────────────────────────────────────────
@@ -300,7 +293,11 @@ function toggleVoice() {
  
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   recognition = new SR();
-  recognition.lang = "hi-IN";
+  // "en-IN" gives Hinglish — English medical words stay English ("breast lump",
+  // "chest pain") while Hindi words also work ("bukhar", "dard", "pet mein").
+  // "hi-IN" forced pure Devanagari which broke matching for English loanwords
+  // like ब्रेस्ट→bresta, लैंप→lainpa, हार्ट→harta etc.
+  recognition.lang = "en-IN";
   recognition.interimResults = false;
  
   const overlay = document.getElementById("voiceOverlay");
@@ -447,7 +444,7 @@ const DEPARTMENTS = [
   "Cardiology (Heart)", "Cardiothoracic & Vascular Surgery (Heart Surgery)",
   "Neurology (Brain & Nerves)", "Neurosurgery (Brain Surgery)",
   "Ophthalmology (Eyes)", "Dental Surgery", "Oncology (Cancer)",
-  "Pulmonary Medicine", "Casualty / Emergency"
+  "Pulmonary Medicine"
 ];
 
 function showDeptPicker() {
