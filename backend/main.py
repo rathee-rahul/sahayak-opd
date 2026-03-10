@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
-import asyncio, os, sys, json, re
+import asyncio, os, sys, json, re, requests
 from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -52,6 +52,11 @@ groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 cerebras_client = OpenAI(
     base_url="https://api.cerebras.ai/v1",
     api_key=os.getenv("CEREBRAS_API_KEY")
+)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models"
+    "/gemini-2.0-flash:generateContent"
 )
 
 app = FastAPI()
@@ -417,8 +422,64 @@ def _sort_jpnatc_last(doctors: list) -> list:
 # LLM CALL FUNCTIONS
 # ══════════════════════════════════════════════════════════════
 
+def call_gemini(system_prompt: str, messages: list, max_tokens: int = 512, label: str = "") -> str:
+    """
+    Call Gemini 2.0 Flash via REST API.
+    Gemini uses a different format than OpenAI-compatible APIs:
+      - system prompt goes as first "user" turn with role "user" + model "model" ack
+      - contents array instead of messages array
+      - response in candidates[0].content.parts[0].text
+    Returns raw JSON string or raises on failure.
+    """
+    if not GEMINI_API_KEY:
+        raise ValueError("GEMINI_API_KEY not set")
+
+    # Build contents array — system prompt first, then conversation
+    contents = [
+        {"role": "user",  "parts": [{"text": system_prompt}]},
+        {"role": "model", "parts": [{"text": "Understood. I will respond only in valid JSON."}]},
+    ]
+    for msg in messages:
+        role = "user" if msg["role"] == "user" else "model"
+        contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+
+    payload = {
+        "contents": contents,
+        "generationConfig": {
+            "temperature": 0.2,
+            "maxOutputTokens": max_tokens,
+            "responseMimeType": "application/json",  # force JSON output
+        }
+    }
+
+    resp = requests.post(
+        f"{GEMINI_URL}?key={GEMINI_API_KEY}",
+        json=payload,
+        headers={"Content-Type": "application/json"},
+        timeout=15,
+    )
+
+    if resp.status_code != 200:
+        raise Exception(f"Gemini HTTP {resp.status_code}: {resp.text[:200]}")
+
+    data = resp.json()
+    text = data["candidates"][0]["content"]["parts"][0]["text"]
+    print(f"[LLM:{label}] Gemini OK")
+    return text
+
+
 def call_llm(system_prompt: str, messages: list, max_tokens: int = 512, label: str = "") -> str:
-    """Groq primary → Cerebras fallback. Returns raw JSON string."""
+    """
+    LLM cascade: Gemini 2.0 Flash → Groq 70B → Cerebras 8B
+    Returns raw JSON string. Empty string if all fail.
+    """
+    # ── Primary: Gemini 2.0 Flash ─────────────────────────────
+    try:
+        return call_gemini(system_prompt, messages, max_tokens, label)
+    except Exception as e:
+        print(f"[LLM:{label}] Gemini failed: {e} → Groq")
+
+    # ── Fallback 1: Groq 70B ──────────────────────────────────
     try:
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
@@ -432,6 +493,7 @@ def call_llm(system_prompt: str, messages: list, max_tokens: int = 512, label: s
     except Exception as e:
         print(f"[LLM:{label}] Groq failed: {e} → Cerebras")
 
+    # ── Fallback 2: Cerebras 8B ───────────────────────────────
     try:
         response = cerebras_client.chat.completions.create(
             model="llama3.1-8b",
