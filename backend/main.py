@@ -608,6 +608,28 @@ async def chat(request: ChatRequest):
     raw_flags = raw_flags_result
     features  = parse_extractor_response(llm1_raw)
 
+    # ── LLM1 RESCUE: if primary_complaint is None but keyword_scan caught flags,
+    # synthesize a primary_complaint from the strongest flag so engine can score it.
+    # This covers bare inputs like "chest pain", "bukhar", "headache".
+    if not features.get("primary_complaint") and raw_flags:
+        _FLAG_TO_COMPLAINT = {
+            "chest_pain":      "chest pain",
+            "breathlessness":  "breathlessness",
+            "unconscious":     "unconscious",
+            "seizure":         "seizure",
+            "stroke":          "stroke",
+            "heavy_bleeding":  "heavy bleeding",
+            "arm_pain":        "arm pain",
+            "sweating":        "sweating",
+        }
+        for flag, complaint in _FLAG_TO_COMPLAINT.items():
+            if raw_flags.get(flag):
+                features["primary_complaint"] = complaint
+                if not features.get("body_part") and flag == "chest_pain":
+                    features["body_part"] = "chest"
+                print(f"[LLM1 Rescue] primary set from flag: {complaint}")
+                break
+
     print(f"[Engine] primary={features.get('primary_complaint')} "
           f"flags={[k for k, v in raw_flags.items() if v]}")
 

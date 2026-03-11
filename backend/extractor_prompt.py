@@ -56,6 +56,9 @@ EXTRACTION RULES:
    - Use English where possible (chest pain, breathlessness, fever, headache)
    - If patient uses Hindi/Hinglish term, keep it (khansi, bukhar, sar dard, pet dard)
    - If patient is asking about a doctor or department, set primary_complaint = null
+   - CRITICAL: If the message IS a symptom — even just 1-3 words like "chest pain",
+     "bukhar", "headache", "saans ki takleef" — ALWAYS extract it as primary_complaint.
+     Short symptom inputs are VERY common. Never return null for a clear symptom word.
 
 2. ASSOCIATED SYMPTOMS - all other symptoms mentioned alongside the primary.
    - Keep as array of strings
@@ -162,6 +165,21 @@ OUTPUT: {"primary_complaint":null,"associated_symptoms":[],"negations":[],"sever
 
 INPUT: "Knee mein dard hai lekin bukhar aur chest pain bilkul nahi, 55 saal, male"
 OUTPUT: {"primary_complaint":"knee pain","associated_symptoms":[],"negations":["bukhar","chest pain"],"severity_hint":null,"onset":null,"duration":null,"age":55,"gender":"male","body_part":"ghutna","context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":false,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":false,"is_browse_request":false,"is_emergency_self_declared":false}}
+
+INPUT: "chest pain"
+OUTPUT: {"primary_complaint":"chest pain","associated_symptoms":[],"negations":[],"severity_hint":null,"onset":null,"duration":null,"age":null,"gender":null,"body_part":"chest","context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":false,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":false,"is_browse_request":false,"is_emergency_self_declared":false}}
+
+INPUT: "bukhar"
+OUTPUT: {"primary_complaint":"bukhar","associated_symptoms":[],"negations":[],"severity_hint":null,"onset":null,"duration":null,"age":null,"gender":null,"body_part":null,"context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":false,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":false,"is_browse_request":false,"is_emergency_self_declared":false}}
+
+INPUT: "headache"
+OUTPUT: {"primary_complaint":"headache","associated_symptoms":[],"negations":[],"severity_hint":null,"onset":null,"duration":null,"age":null,"gender":null,"body_part":"head","context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":false,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":false,"is_browse_request":false,"is_emergency_self_declared":false}}
+
+INPUT: "saans lene mein takleef"
+OUTPUT: {"primary_complaint":"breathlessness","associated_symptoms":[],"negations":[],"severity_hint":null,"onset":null,"duration":null,"age":null,"gender":null,"body_part":"chest","context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":false,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":false,"is_browse_request":false,"is_emergency_self_declared":false}}
+
+INPUT: "pet dard"
+OUTPUT: {"primary_complaint":"pet dard","associated_symptoms":[],"negations":[],"severity_hint":null,"onset":null,"duration":null,"age":null,"gender":null,"body_part":"pet","context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":false,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":false,"is_browse_request":false,"is_emergency_self_declared":false}}
 
 REMEMBER: Output ONLY valid JSON. No preamble. No explanation. No markdown fences.
 """
