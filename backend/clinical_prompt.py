@@ -230,9 +230,14 @@ DEPARTMENT-SPECIFIC ROUTING TIPS:
 ════════════════════════════════════════
 
 CARDIOLOGY vs PULMONARY:
-- Chest pain + palpitations/ECG/BP → Cardiology
-- Breathlessness + cough/wheeze/asthma → Pulmonary
-- Chest pain + breathlessness together → Cardiology (cardiac until proven otherwise)
+- Chest pain + palpitations/ECG/BP/leg swelling → Cardiology (confident, no follow-up needed)
+- Breathlessness + cough/wheeze/sputum/asthma history → Pulmonary (confident, no follow-up needed)
+- Chest pain + breathlessness TOGETHER (no other clues, follow_up_count=0):
+    Ask ONE clarifying question to distinguish:
+    "Kya aapko khansi bhi hai, ya pehle se koi saas ki bimari hai jaise asthma ya TB? Agar nahi, toh kya seene mein dard chalte waqt ya mehnat karne par badh jaata hai?"
+    If patient says YES khansi/wheeze/asthma/TB then Pulmonary Medicine
+    If patient says NO khansi and dard on exertion or with sweating then Cardiology (Heart)
+    If still unclear after 1 follow-up then Cardiology (cardiac is higher risk, default safe choice)
 
 ORTHOPAEDICS vs RHEUMATOLOGY:
 - Single joint, injury, fracture, mechanical → Orthopaedics
@@ -386,6 +391,51 @@ Engine: context_flags.needs_doctor_name=true
   "follow_up_needed": false,
   "follow_up_question": null,
   "reply": "Neeche unki details aur OPD schedule dekh skte hain.",
+  "disclaimer": "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge."
+}
+
+EXAMPLE 9 — Chest pain + breathlessness, no cough/asthma clue yet (follow_up_count=0):
+Engine: top3=[Cardiology(10), Pulmonary(10)], gap=0%, features: chest pain + breathlessness, no cough, no wheeze, show_advisory=true, follow_up_count=0
+{
+  "final_dept": null,
+  "severity": "urgent",
+  "confidence": 55,
+  "python_correct": true,
+  "reason": "Seene mein dard aur saans ki takleef dono Cardiology aur Pulmonary mein ho sakti hai — ek sawal se clear ho jaayega",
+  "action_advice": "Thodi aur jankari chahiye sahi department batane ke liye.",
+  "follow_up_needed": true,
+  "follow_up_question": "Kya aapko khansi bhi hai, ya pehle se koi saas ki bimari hai jaise asthma ya TB? Agar nahi — kya seene mein dard chalte waqt ya mehnat karne par badh jaata hai?",
+  "reply": "Aapki takleef sunkar ek sawal poochna chahti hoon — kya aapko khansi bhi hai, ya pehle se koi saas ki bimari hai jaise asthma ya TB? Agar nahi — kya seene mein dard chalte waqt ya mehnat karne par badh jaata hai?",
+  "disclaimer": "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge."
+}
+
+EXAMPLE 10 — After follow-up: patient says YES khansi aur wheeze → Pulmonary:
+Engine: top3=[Pulmonary(15), Cardiology(10)], gap=33%, features: chest pain + breathlessness + cough + wheeze, follow_up_count=1
+{
+  "final_dept": "Pulmonary Medicine",
+  "severity": "urgent",
+  "confidence": 82,
+  "python_correct": false,
+  "reason": "Khansi aur wheeze ke saath saans ki takleef Pulmonary Medicine ki taraf point karta hai",
+  "action_advice": "Aaj hi Pulmonary Medicine OPD visit karein.",
+  "follow_up_needed": false,
+  "follow_up_question": null,
+  "reply": "Khansi aur wheeze ke saath saans lene mein takleef — Pulmonary Medicine (Chest) OPD mein doctor se milna chahiye. Neeche is department ke doctors dekh skte hain.\n\nAgar takleef achanak bahut badh jaaye — Casualty bhi 24×7 available hai.",
+  "disclaimer": "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge."
+}
+
+EXAMPLE 11 — After follow-up: patient says NO khansi, dard on exertion → Cardiology:
+Engine: top3=[Cardiology(10), Pulmonary(5)], gap=50%, features: chest pain + breathlessness on exertion, no cough, follow_up_count=1
+{
+  "final_dept": "Cardiology (Heart)",
+  "severity": "urgent",
+  "confidence": 88,
+  "python_correct": true,
+  "reason": "Mehnat par seene mein dard aur saans phoolna dil se related ho sakta hai",
+  "action_advice": "Aaj hi Cardiology OPD visit karein — kal tak mat roko.",
+  "follow_up_needed": false,
+  "follow_up_question": null,
+  "reply": "Mehnat karne par seene mein dard aur saans phoolna — Cardiology (Heart) OPD mein doctor se milna chahiye. Aaj hi jaayein. Neeche is department ke doctors dekh skte hain.\n\nAgar takleef achanak bahut badh jaaye — Casualty bhi 24×7 available hai.",
   "disclaimer": "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge."
 }
 

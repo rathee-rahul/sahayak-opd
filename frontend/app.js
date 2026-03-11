@@ -7,6 +7,9 @@ let conversationHistory = [];
 let isRecording = false;
 let recognition = null;
 let activeIntent = null;   // tracks which tile the user activated: 'doctor_schedule' | null
+let followUpCount = 0;
+let confirmedSymptoms = [];
+let deniedSymptoms = [];
 
 // ─── TODAY DETECTION ──────────────────────────────────────────────────────────
 const TODAY_NAME = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()];
@@ -55,14 +58,25 @@ async function sendMessage(messageText) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        message: messageToSend,
-        history: conversationHistory.slice(-10),
-        active_intent: activeIntent || "",
+        message:            messageToSend,
+        history:            conversationHistory.slice(-10),
+        active_intent:      activeIntent || "",
+        follow_up_count:    followUpCount,
+        confirmed_symptoms: confirmedSymptoms,
+        denied_symptoms:    deniedSymptoms,
       }),
     });
  
     const data = await res.json();
     removeTypingIndicator(typingEl);
+
+    // Update session state from backend response
+    if (typeof data.follow_up_count === "number") followUpCount = data.follow_up_count;
+    if (data.follow_up_needed === false) {
+      // Routing resolved — reset follow-up state for next topic
+      confirmedSymptoms = [];
+      deniedSymptoms = [];
+    }
 
     // Reset intent after every response — user must click a tile again to re-activate
     if (data.intent && data.intent !== 'doctor_schedule') activeIntent = null;
@@ -430,6 +444,9 @@ async function speakText(text) {
 // ── TILE 1: Symptom Flow ──────────────────────────────────────
 function startSymptomFlow() {
   activeIntent = null;
+  followUpCount = 0;
+  confirmedSymptoms = [];
+  deniedSymptoms = [];
   appendMessage('bot', '<span class="hi">अपनी तकलीफ बताइए — जैसे सिरदर्द, बुखार, पेट दर्द आदि।</span><span class="en">Please describe your symptoms.</span>');
   const input = document.getElementById('chatInput');
   input.placeholder = 'अपने लक्षण लिखें… · Type your symptoms…';

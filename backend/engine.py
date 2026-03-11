@@ -255,13 +255,21 @@ SCORING_RULES: List[Tuple[str, str, int]] = [
     ("sleep apnea",                  "Pulmonary Medicine",                       10),
     ("sleep apnoea",                 "Pulmonary Medicine",                       10),
     ("haemoptysis",                  "Pulmonary Medicine",                       10),
-    ("blood in sputum",              "Pulmonary Medicine",                        7),
+    ("blood in sputum",              "Pulmonary Medicine",                       10),  # increased: TB/bronchiectasis more likely than cancer
     ("sputum",                       "Pulmonary Medicine",                        5),
     ("phlegm",                       "Pulmonary Medicine",                        5),
     ("wheeze",                       "Pulmonary Medicine",                        7),
     ("wheezing",                     "Pulmonary Medicine",                        7),
     ("night cough",                  "Pulmonary Medicine",                        7),
     ("cough at night",               "Pulmonary Medicine",                        7),
+    # Pulmonary combo signals — clearly not cardiac when these appear with breathlessness
+    ("cough breathless",             "Pulmonary Medicine",                        7),
+    ("wheeze breathless",            "Pulmonary Medicine",                        7),
+    ("khansi saans",                 "Pulmonary Medicine",                        7),
+    ("asthma attack",                "Pulmonary Medicine",                       10),
+    ("inhaler",                      "Pulmonary Medicine",                       10),
+    ("nebulizer",                    "Pulmonary Medicine",                        7),
+    ("nebuliser",                    "Pulmonary Medicine",                        7),
 
     # GASTROENTEROLOGY
     ("acidity",                     "Gastroenterology (Stomach & Digestion)",   7),
@@ -457,7 +465,6 @@ SCORING_RULES: List[Tuple[str, str, int]] = [
     ("muscle pain",                 "Rheumatology (Joint & Autoimmune)",         5),
     ("vasculitis",                  "Rheumatology (Joint & Autoimmune)",        10),
     ("rheumatoid arthritis",        "Rheumatology (Joint & Autoimmune)",        10),
-    ("ankylosing spondylitis",      "Rheumatology (Joint & Autoimmune)",        10),
 
     # NEPHROLOGY
     ("chronic kidney",              "Nephrology",                               10),
@@ -768,7 +775,7 @@ SCORING_RULES: List[Tuple[str, str, int]] = [
     ("solid tumour",                "Oncology (Cancer)",                        10),
     ("mass on xray",                "Oncology (Cancer)",                        10),
     ("coughing up blood",           "Oncology (Cancer)",                        10),
-    ("blood in sputum",             "Oncology (Cancer)",                        10),
+    ("blood in sputum",             "Oncology (Cancer)",                         5),  # reduced: Pulmonary more likely for haemoptysis at OPD
     ("unexplained weight loss",     "Oncology (Cancer)",                         7),
     ("cancer follow-up",            "Oncology (Cancer)",                        10),
     ("psa",                         "Oncology (Cancer)",                         7),
@@ -881,8 +888,8 @@ SCORING_RULES: List[Tuple[str, str, int]] = [
     ("plastic surgery",             "Burns & Plastic Surgery",                  10),
     ("cosmetic surgery",            "Burns & Plastic Surgery",                   7),
     ("hand surgery",                "Burns & Plastic Surgery",                   7),
-    ("cleft lip",                   "Burns & Plastic Surgery",                  10),
-    ("cleft palate",                "Burns & Plastic Surgery",                  10),
+    ("cleft lip",                   "Burns & Plastic Surgery",                   5),  # reduced: children → Paediatric Surgery; adults → Burns
+    ("cleft palate",                "Burns & Plastic Surgery",                   5),  # reduced: same reason
     ("reconstructive",              "Burns & Plastic Surgery",                  10),
     ("reconstruction",              "Burns & Plastic Surgery",                  10),
     ("breast reconstruction",       "Burns & Plastic Surgery",                  10),
