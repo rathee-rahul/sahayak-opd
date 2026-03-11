@@ -35,6 +35,8 @@ async function sendMessage(messageText) {
   input.value = "";
   appendMessage("user", text);
   conversationHistory.push({ role: "user", content: text });
+  // Cap history to avoid unbounded memory growth in long sessions
+  if (conversationHistory.length > 30) conversationHistory = conversationHistory.slice(-30);
  
   const typingEl = showTypingIndicator();
 
@@ -193,6 +195,17 @@ function renderDeptDoctors(department, doctors, containerEl, sub_specialty) {
   requestAnimationFrame(() => requestAnimationFrame(() => wrapper.classList.add("visible")));
 }
  
+// ─── XSS HELPER ──────────────────────────────────────────────────────────────
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // ─── BUILD SINGLE DOCTOR CARD ────────────────────────────────────────────────
 function buildCard(doc, dept) {
   const isToday = isDoctorAvailableToday(doc.opd_days);
@@ -201,31 +214,31 @@ function buildCard(doc, dept) {
     .split(" ").filter(Boolean).slice(0, 2)
     .map(w => w[0] || "").join("").toUpperCase() || "DR";
   const conditions = doc.conditions
-    ? doc.conditions.split(",").slice(0, 4).map(c => `<span class="cond-chip">${c.trim()}</span>`).join("") : "";
-  const subSpec    = doc.sub_specialty ? `<span class="tag tag-blue">${doc.sub_specialty}</span>` : "";
-  const preferred  = doc.preferred_for ? `<span class="tag tag-green">${doc.preferred_for}</span>` : "";
+    ? doc.conditions.split(",").slice(0, 4).map(c => `<span class="cond-chip">${escapeHtml(c.trim())}</span>`).join("") : "";
+  const subSpec    = doc.sub_specialty ? `<span class="tag tag-blue">${escapeHtml(doc.sub_specialty)}</span>` : "";
+  const preferred  = doc.preferred_for ? `<span class="tag tag-green">${escapeHtml(doc.preferred_for)}</span>` : "";
   const isJPNATC   = (doc.center || "").toUpperCase() === "JPNATC";
-  const centerLine = doc.center   ? `<div class="cd-row"><span>🏥</span><span>${doc.center}</span></div>` : "";
-  const locLine    = doc.location ? `<div class="cd-row"><span>📍</span><span>${doc.location}</span></div>` : "";
-  const roomLine   = doc.room     ? `<div class="cd-row"><span>🚪</span><span>${doc.room}</span></div>` : "";
-  const notesLine  = doc.notes    ? `<div class="cd-row cd-notes"><span>📝</span><span>${doc.notes}</span></div>` : "";
-  const deptTag    = dept         ? `<div class="card-dept-label">${dept}</div>` : "";
+  const centerLine = doc.center   ? `<div class="cd-row"><span>🏥</span><span>${escapeHtml(doc.center)}</span></div>` : "";
+  const locLine    = doc.location ? `<div class="cd-row"><span>📍</span><span>${escapeHtml(doc.location)}</span></div>` : "";
+  const roomLine   = doc.room     ? `<div class="cd-row"><span>🚪</span><span>${escapeHtml(doc.room)}</span></div>` : "";
+  const notesLine  = doc.notes    ? `<div class="cd-row cd-notes"><span>📝</span><span>${escapeHtml(doc.notes)}</span></div>` : "";
+  const deptTag    = dept         ? `<div class="card-dept-label">${escapeHtml(dept)}</div>` : "";
   return `
     <div class="doctor-card ${isToday ? "card-today" : ""} ${isJPNATC ? "card-jpnatc" : ""}">
       ${isJPNATC ? '<div class="jpnatc-banner">⚠️ JPNATC — Trauma Centre Only · Walk-in OPD नहीं है</div>' : ""}
       ${isToday ? '<div class="today-ribbon">Available Today</div>' : ""}
       <div class="card-top">
-        <div class="doc-avatar ${isToday ? "avatar-today" : ""}">${initials}</div>
+        <div class="doc-avatar ${isToday ? "avatar-today" : ""}">${escapeHtml(initials)}</div>
         <div class="doc-meta">
-          <div class="doc-name">${doc.name}</div>
-          <div class="doc-desig">${doc.designation}</div>
-          <div class="doc-unit">${doc.unit}</div>
+          <div class="doc-name">${escapeHtml(doc.name)}</div>
+          <div class="doc-desig">${escapeHtml(doc.designation)}</div>
+          <div class="doc-unit">${escapeHtml(doc.unit)}</div>
           ${deptTag}
         </div>
       </div>
       <div class="card-schedule">
-        <div class="cd-row"><span>📅</span><span>${doc.opd_days || "—"}</span></div>
-        <div class="cd-row"><span>🕐</span><span>${doc.opd_timing || "—"}</span></div>
+        <div class="cd-row"><span>📅</span><span>${escapeHtml(doc.opd_days) || "—"}</span></div>
+        <div class="cd-row"><span>🕐</span><span>${escapeHtml(doc.opd_timing) || "—"}</span></div>
         ${roomLine}${locLine}${centerLine}${notesLine}
       </div>
       ${subSpec || preferred ? `<div class="card-tags">${subSpec}${preferred}</div>` : ""}
@@ -260,7 +273,9 @@ function appendMessage(role, text) {
 }
  
 function formatMessage(text) {
-  return text
+  // Escape HTML first to prevent XSS, then apply safe markdown transforms
+  const safe = escapeHtml(text);
+  return safe
     .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
     .replace(/\*(.*?)\*/g, "<em>$1</em>")
     .replace(/\n/g, "<br>");
@@ -286,7 +301,7 @@ function removeTypingIndicator(el) { el?.remove(); }
 // ─── VOICE INPUT ─────────────────────────────────────────────────────────────
 function toggleVoice() {
   if (!("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
-    alert("Voice input not supported. Please use Chrome.");
+    appendMessage("bot", "⚠️ Voice input is not supported in this browser. Please use Chrome or Edge, or type your message.");
     return;
   }
   if (isRecording) { recognition?.stop(); return; }
@@ -431,39 +446,33 @@ function startDoctorSearch() {
 }
 
 // ── TILE 3: Department Picker ─────────────────────────────────
-const DEPARTMENTS = [
-  "Medicine (General)", "Paediatrics Medicine (Children)", "Surgery (General)",
-  "Obstetrics & Gynaecology", "Orthopaedics (Bones & Joints)",
-  "Dermatology & Venereology (Skin)", "Otorhinolaryngology - ENT",
-  "Psychiatry (Mental Health)", "Urology (Kidney & Urinary)",
-  "Gastroenterology (Stomach & Digestion)", "G.I. Surgery (Stomach Surgery)",
-  "Nephrology", "Endocrinology (Diabetes & Hormones)",
-  "Geriatric Medicine (Elderly Care)", "Rheumatology (Joint & Autoimmune)",
-  "Physical Medicine & Rehabilitation", "Haematology (Blood Disorders)",
-  "Burns & Plastic Surgery", "Paediatric Surgery (Children Surgery)",
-  "Cardiology (Heart)", "Cardiothoracic & Vascular Surgery (Heart Surgery)",
-  "Neurology (Brain & Nerves)", "Neurosurgery (Brain Surgery)",
-  "Ophthalmology (Eyes)", "Dental Surgery", "Oncology (Cancer)",
-  "Pulmonary Medicine"
-];
-
 function showDeptPicker() {
   activeIntent = null;  // clear doctor search mode when user opens dept picker
   const overlay = document.getElementById('deptPickerOverlay');
   const grid = document.getElementById('deptPickerGrid');
-  grid.innerHTML = DEPARTMENTS.map((dept, i) => `
-    <button class="dept-chip-btn" onclick="selectDepartment(DEPARTMENTS[${i}])">
-      <span>${dept}</span>
-      <span class="dept-chip-today" id="today-${dept.replace(/[^a-zA-Z]/g,'')}"></span>
-    </button>
-  `).join('');
+
+  // Show loading state while fetching
+  grid.innerHTML = '<div class="dept-picker-loading">⏳ Loading departments…</div>';
   overlay.classList.add('active');
-  fetch(`${BACKEND_BASE}/departments`).then(r => r.json()).then(data => {
-    data.departments.forEach(d => {
-      const el = document.getElementById('today-' + d.name.replace(/[^a-zA-Z]/g,''));
-      if (el && d.available_today > 0) el.textContent = '🟢 ' + d.available_today + ' today';
+
+  fetch(`${BACKEND_BASE}/departments`)
+    .then(r => r.json())
+    .then(data => {
+      const depts = data.departments || [];
+      grid.innerHTML = depts.map((d, i) => `
+        <button class="dept-chip-btn" data-dept="${escapeHtml(d.name)}">
+          <span>${escapeHtml(d.name)}</span>
+          <span class="dept-chip-today">${d.available_today > 0 ? '🟢 ' + d.available_today + ' today' : ''}</span>
+        </button>
+      `).join('');
+      // Attach click handlers via addEventListener — no inline JS, safe from XSS
+      grid.querySelectorAll('.dept-chip-btn').forEach(btn => {
+        btn.addEventListener('click', () => selectDepartment(btn.dataset.dept));
+      });
+    })
+    .catch(() => {
+      grid.innerHTML = '<div class="dept-picker-loading">❌ Could not load departments. Please try again.</div>';
     });
-  }).catch(() => {});
 }
 
 function closeDeptPicker(e) {

@@ -840,3 +840,13 @@
   border-radius: 12px 12px 0 0;
   letter-spacing: 0.1px;
 }
+
+/* ── Department Picker Loading State ── */
+.dept-picker-loading {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 24px 16px;
+  font-size: 13px;
+  color: var(--gray-500);
+  font-family: 'DM Sans', sans-serif;
+}

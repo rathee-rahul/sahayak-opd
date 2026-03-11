@@ -255,7 +255,6 @@ def extract_browse_dept(message: str) -> str | None:
     return best_dept if best_score >= 60 else None
 
 
-TODAY_NAME = datetime.now().strftime("%A")
 TODAY_VARIANTS = {
     "Monday":    ["mon", "monday"],
     "Tuesday":   ["tue", "tuesday"],
@@ -266,11 +265,19 @@ TODAY_VARIANTS = {
     "Sunday":    ["sun", "sunday"],
 }
 
+def get_today_name() -> str:
+    """Return current day name — computed per-call so it never goes stale."""
+    return datetime.now().strftime("%A")
+
+# Module-level alias kept only for endpoints that need it at import time.
+# All request handlers must call get_today_name() directly.
+TODAY_NAME = get_today_name()
+
 def is_available_today(opd_days: str) -> bool:
     if not opd_days:
         return False
     lower = opd_days.lower()
-    return any(v in lower for v in TODAY_VARIANTS.get(TODAY_NAME, []))
+    return any(v in lower for v in TODAY_VARIANTS.get(get_today_name(), []))
 
 
 # ══════════════════════════════════════════════════════════════
@@ -743,7 +750,7 @@ async def chat(request: ChatRequest):
         dept_doctors = fetch_doctors_for_dept(final_dept, sanitized)
 
     # ── STEP 7: Async ambiguity log ───────────────────────────
-    asyncio.create_task(log_if_ambiguous(
+    _log_task = asyncio.create_task(log_if_ambiguous(
         sanitized_input    = sanitized,
         features           = features,
         engine_output      = engine_output,
@@ -753,9 +760,13 @@ async def chat(request: ChatRequest):
         follow_up_count    = follow_up_count,
         session_id         = session_id or None,
     ))
+    _log_task.add_done_callback(
+        lambda t: t.exception() and print(f"[AmbiguityLog] Error: {t.exception()}")
+    )
 
     # ── RESPONSE ──────────────────────────────────────────────
     new_follow_up_count = follow_up_count + (1 if clinical.get("follow_up_needed") else 0)
+    today = get_today_name()
 
     return {
         "reply":          clinical.get("reply", ""),
@@ -786,7 +797,7 @@ async def chat(request: ChatRequest):
             "pii_scrubbed":   was_sanitized(raw_message, sanitized),
         },
 
-        "today":  TODAY_NAME,
+        "today":  today,
         "intent": (
             "selfcare"          if is_selfcare  else
             "doctor_schedule"   if needs_doctor else
@@ -803,23 +814,24 @@ async def chat(request: ChatRequest):
 
 @app.get("/browse-department")
 def browse_department(department: str = Query(...)):
+    today = get_today_name()
     all_docs = DOCTOR_DATA.get(department, [])
     if not all_docs:
-        return {"department": department, "today": [], "others": [], "today_name": TODAY_NAME}
+        return {"department": department, "today": [], "others": [], "today_name": today}
     todays = [d for d in all_docs if is_available_today(d.get("opd_days", ""))]
     others = [d for d in all_docs if not is_available_today(d.get("opd_days", ""))]
     return {
         "department": department,
         "today":      todays,
         "others":     others,
-        "today_name": TODAY_NAME,
+        "today_name": today,
     }
 
 
 @app.get("/todays-doctors")
 def todays_doctors(department: str = Query(None)):
     results = get_todays_doctors(department)
-    return {"today": TODAY_NAME, "count": len(results), "doctors": results}
+    return {"today": get_today_name(), "count": len(results), "doctors": results}
 
 
 @app.get("/departments")
@@ -846,7 +858,7 @@ def get_doctors(department: str = Query(...), sub_specialty: str = Query(None)):
 def home():
     return {
         "status":            "Sahayak v8 is running!",
-        "today":             TODAY_NAME,
+        "today":             get_today_name(),
         "total_departments": len(DOCTOR_DATA),
         "total_doctors":     sum(len(v) for v in DOCTOR_DATA.values()),
     }
@@ -854,4 +866,4 @@ def home():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("backend.main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
