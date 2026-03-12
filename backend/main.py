@@ -204,36 +204,35 @@ _CONCEPT_KEYWORDS = {
     "nak":       "Otorhinolaryngology - ENT",        # transliterated नाक
     "gala":      "Otorhinolaryngology - ENT",        # transliterated गला
     "ent":       "Otorhinolaryngology - ENT",   # whole-word only (see extract_browse_dept)
-    "nyuro":     "Neurology (Brain & Nerves)",        # transliterated न्यूरो
-    "neuro":     "Neurology (Brain & Nerves)",
-    "nyurolaji": "Neurology (Brain & Nerves)",
-    "neurology": "Neurology (Brain & Nerves)",
+    "nyuro":        "Neurology (Brain & Nerves)",        # transliterated न्यूरो
+    "nyurolaji":    "Neurology (Brain & Nerves)",
+    "neurology":    "Neurology (Brain & Nerves)",
+    # Neurosurgery must come BEFORE "neuro" so substring match hits it first
+    "neurosurgery": "Neurosurgery (Brain Surgery)",
+    "brain surgery":"Neurosurgery (Brain Surgery)",
+    "brain tumor":  "Neurosurgery (Brain Surgery)",
+    "brain tumour": "Neurosurgery (Brain Surgery)",
+    "spine surgery":"Neurosurgery (Brain Surgery)",
+    "spinal surgery":"Neurosurgery (Brain Surgery)",
+    "head injury":  "Neurosurgery (Brain Surgery)",
+    "nyurosarjari": "Neurosurgery (Brain Surgery)",  # Hindi transliteration
+    "neuro":        "Neurology (Brain & Nerves)",    # generic — after neurosurgery
 }
 
 # ── BROWSE DEPARTMENT EXTRACTOR ───────────────────────────────
 def extract_browse_dept(message: str) -> str | None:
     """
     Extract department from browse query. Three-step approach:
-    1. Concept keyword match — handles words like "kidney", "sugar", "bachon",
-       transliterated Hindi bodies ("hddi", "ankha") that don't fuzzy-match dept names
-    2. Fuzzy match — handles English/Hinglish dept names directly
+    1. Exact/fuzzy match against dept names — explicit dept names ALWAYS win
+    2. Concept keyword match — handles Hindi/transliterated words like "kidney", "bachon"
+    3. Lower-threshold fuzzy fallback
     Note: message is already transliterated to Roman by the time it reaches here.
     """
     msg_lower = message.lower()
 
-    # Step 1 — Concept keyword match
-    # Short keywords (<=4 chars e.g. "ent", "pet", "dil") → whole word match only
-    # Longer keywords → substring match is fine
-    words = set(re.split(r'[\s,?।]+', msg_lower))
-    for keyword, dept in _CONCEPT_KEYWORDS.items():
-        if keyword.startswith("#"):
-            continue
-        matched = keyword in words if len(keyword) <= 4 else keyword in msg_lower
-        if matched:
-            print(f"[Browse] Concept keyword: '{keyword}' → '{dept}'")
-            return dept
-
-    # Step 2 — Fuzzy match against English department names
+    # Step 1 — Fuzzy match against English department names FIRST
+    # This ensures explicit dept names (e.g. "Cardiothoracic & Vascular Surgery")
+    # are matched before concept keywords like "heart" can intercept.
     best_dept  = None
     best_score = 0
 
@@ -251,6 +250,28 @@ def extract_browse_dept(message: str) -> str | None:
             best_score = score
             best_dept  = dept
 
+    # High-confidence fuzzy match → return immediately, skip concept keywords
+    if best_score >= 75:
+        print(f"[Browse] Fuzzy match: '{best_dept}' score={best_score}")
+        return best_dept
+
+    # Step 2 — Concept keyword match (for Hindi/transliterated words)
+    # Short keywords (<=4 chars e.g. "ent", "pet", "dil") → whole word match only
+    # Longer keywords → substring match is fine
+    # IMPORTANT: dict is ordered — neurosurgery entries come before "neuro"
+    words = set(re.split(r'[\s,?।]+', msg_lower))
+    for keyword, dept in _CONCEPT_KEYWORDS.items():
+        if keyword.startswith("#"):
+            continue
+        matched = keyword in words if len(keyword) <= 4 else keyword in msg_lower
+        if matched:
+            # Guard: don't let "neuro" match when message clearly says "neurosurgery"
+            if keyword == "neuro" and "surgery" in msg_lower:
+                continue
+            print(f"[Browse] Concept keyword: '{keyword}' → '{dept}'")
+            return dept
+
+    # Step 3 — Lower-threshold fuzzy fallback
     print(f"[Browse] msg='{msg_lower[:50]}' best='{best_dept}' score={best_score}")
     return best_dept if best_score >= 60 else None
 
