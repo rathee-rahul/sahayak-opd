@@ -586,9 +586,7 @@ def fetch_doctors_for_dept(department: str, raw_message: str) -> list:
     dept_matches = [m for m in all_matches if m["dept"] == department]
     if dept_matches:
         # Attach the doctor's own dept to the object so buildCard labels it correctly
-        for m in dept_matches:
-            m["doctor"]["_dept"] = m["dept"]
-        matched = [m["doctor"] for m in dept_matches[:10]]
+        matched = [{**m["doctor"], "_dept": m["dept"]} for m in dept_matches[:10]]
         today_non_j = [d for d in matched if is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
         other_non_j = [d for d in matched if not is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
         jpnatc      = [d for d in matched if _is_jpnatc(d)]
@@ -596,9 +594,8 @@ def fetch_doctors_for_dept(department: str, raw_message: str) -> list:
 
     # Fallback: no condition match in dept — show all dept doctors
     all_docs = DOCTOR_DATA.get(department, [])
-    for d in all_docs:
-        d["_dept"] = department
-    return _sort_jpnatc_last(all_docs)
+    tagged = [{**d, "_dept": department} for d in all_docs]
+    return _sort_jpnatc_last(tagged)
 
 
 # ══════════════════════════════════════════════════════════════
@@ -808,10 +805,10 @@ async def chat(request: ChatRequest):
     elif is_browse and final_dept:
         all_docs = DOCTOR_DATA.get(final_dept, [])
         def _is_jpnatc(d): return (d.get("center", "") or "").upper() == "JPNATC"
-        for d in all_docs: d["_dept"] = final_dept
-        todays_main  = [d for d in all_docs if is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
-        others_main  = [d for d in all_docs if not is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
-        jpnatc_docs  = [d for d in all_docs if _is_jpnatc(d)]
+        tagged_docs  = [{**d, "_dept": final_dept} for d in all_docs]
+        todays_main  = [d for d in tagged_docs if is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
+        others_main  = [d for d in tagged_docs if not is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
+        jpnatc_docs  = [d for d in tagged_docs if _is_jpnatc(d)]
         dept_doctors = todays_main + others_main + jpnatc_docs
         # Override LLM reply for browse — suppress follow-up question
         clinical["reply"] = f"{final_dept} ke doctors neeche dekh sakte hain."

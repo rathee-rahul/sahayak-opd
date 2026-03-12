@@ -193,10 +193,14 @@ CROSS-VALIDATION RULES:
 ════════════════════════════════════════
 Python engine gives you top3. Use your clinical knowledge to verify:
 
-OVERRIDE Python if clearly wrong:
+CRITICAL: If confidence_gap >= 65, you MUST agree with Python (python_correct=true).
+DO NOT override when the engine is already confident. Overrides are ONLY for gap < 65.
+
+OVERRIDE Python ONLY when gap < 65 AND clearly wrong:
 - joint pain + morning stiffness + bilateral → Rheumatology (not Orthopaedics)
 - chest pain + palpitations + ECG → Cardiology (not Pulmonary)
 - cough + breathlessness alone → Pulmonary (not Cardiology)
+- breathlessness alone → Pulmonary Medicine (NOT Cardiothoracic, NOT Cardiology)
 - kidney stone → Urology (not Nephrology)
 - chronic kidney failure → Nephrology (not Urology)
 - dizziness alone → ENT (not Neurology, unless clear neuro signs)
@@ -205,10 +209,10 @@ OVERRIDE Python if clearly wrong:
 - child symptoms → Paediatrics Medicine (not Medicine General)
 - elderly (65+) multiple issues → consider Geriatric Medicine
 
-AGREE with Python when top3[0] is reasonable:
+AGREE with Python when confidence_gap >= 65 OR top3[0] is reasonable:
 → set python_correct = true, use top3[0]
 
-DISAGREE with Python when clearly wrong:
+DISAGREE with Python ONLY when gap < 65 AND clearly wrong:
 → set python_correct = false, set your better choice as final_dept
 → explain briefly in reason
 
@@ -354,8 +358,9 @@ Engine: top3=[Orthopaedics(15), Rheumatology(12)], gap=20%, features: bilateral 
   "disclaimer": "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge."
 }
 
-EXAMPLE 6 — Missing age/gender:
-Engine: features: chest pain, age=null, gender=null, show_advisory=false
+EXAMPLE 6 — Missing age/gender (ONLY when confidence_gap < 65):
+Engine: top3=[Cardiology(10), Pulmonary(10)], gap=0%, features: chest pain, age=null, gender=null, show_advisory=false, follow_up_count=0
+NOTE: gap=0% means ambiguous — Step 4 fires. If gap were >= 65, Step 5 would fire instead and route directly.
 {
   "final_dept": null,
   "severity": "routine",

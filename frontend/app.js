@@ -76,11 +76,8 @@ async function sendMessage(messageText) {
 
     // Update session state from backend response
     if (typeof data.follow_up_count === "number") followUpCount = data.follow_up_count;
-    if (data.follow_up_needed === false) {
-      // Routing resolved — reset follow-up state for next topic
-      confirmedSymptoms = [];
-      deniedSymptoms = [];
-    }
+    // Only reset symptom memory when a new symptom flow starts (handled in startSymptomFlow)
+    // Do NOT reset here — symptoms from this turn are still needed for follow-ups
 
     // Reset intent after every response — user must click a tile again to re-activate
     if (data.intent && data.intent !== 'doctor_schedule') activeIntent = null;
@@ -334,10 +331,11 @@ function appendMessage(role, text) {
 }
  
 function formatMessage(text) {
-  // If text contains HTML tags (e.g. bilingual <span> from button actions),
-  // render as-is. Otherwise escape first to prevent XSS.
-  if (/<[a-z][\s\S]*>/i.test(text)) {
-    // Trusted internal HTML — apply markdown on top but don't escape
+  // Only treat as trusted HTML if it contains our known bilingual span classes
+  // (set internally by startSymptomFlow, startDoctorSearch, showEmergencyDirect).
+  // LLM replies and user messages always go through escapeHtml first.
+  const isTrustedHtml = /class="(hi|en)"/.test(text);
+  if (isTrustedHtml) {
     return text
       .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
       .replace(/\*(.*?)\*/g, "<em>$1</em>")
@@ -532,8 +530,8 @@ function setAge(val) {
 }
 
 function maybeCollapseChips() {
-  // Collapse row once both age AND gender are filled
-  if (userAge && userGender) {
+  // Collapse row once age OR gender is filled (don't force both)
+  if (userAge || userGender) {
     const row = document.getElementById("ageGenderRow");
     if (row) {
       row.classList.add("agr-done");
