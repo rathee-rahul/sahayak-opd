@@ -549,7 +549,8 @@ def fetch_doctors_for_dept(department: str, raw_message: str) -> list:
     """
     Fetch and sort doctors for a department.
     Condition-match first, falls back to full dept list.
-    Within condition matches: today-available doctors always shown first.
+    ONLY returns doctors from the specified department — no cross-dept bleed.
+    Within matches: today-available doctors always shown first.
     JPNATC always last.
     """
     if not department or department == "Casualty / Emergency":
@@ -558,14 +559,22 @@ def fetch_doctors_for_dept(department: str, raw_message: str) -> list:
     def _is_jpnatc(d): return (d.get("center", "") or "").upper() == "JPNATC"
 
     all_matches = search_by_condition(raw_message, preferred_dept=department)
-    if all_matches:
-        matched = [m["doctor"] for m in all_matches[:10]]
+    # CRITICAL: filter to preferred dept only — cross-dept matches are irrelevant here
+    dept_matches = [m for m in all_matches if m["dept"] == department]
+    if dept_matches:
+        # Attach the doctor's own dept to the object so buildCard labels it correctly
+        for m in dept_matches:
+            m["doctor"]["_dept"] = m["dept"]
+        matched = [m["doctor"] for m in dept_matches[:10]]
         today_non_j = [d for d in matched if is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
         other_non_j = [d for d in matched if not is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
         jpnatc      = [d for d in matched if _is_jpnatc(d)]
         return today_non_j + other_non_j + jpnatc
 
+    # Fallback: no condition match in dept — show all dept doctors
     all_docs = DOCTOR_DATA.get(department, [])
+    for d in all_docs:
+        d["_dept"] = department
     return _sort_jpnatc_last(all_docs)
 
 
@@ -768,6 +777,7 @@ async def chat(request: ChatRequest):
     elif is_browse and final_dept:
         all_docs = DOCTOR_DATA.get(final_dept, [])
         def _is_jpnatc(d): return (d.get("center", "") or "").upper() == "JPNATC"
+        for d in all_docs: d["_dept"] = final_dept
         todays_main  = [d for d in all_docs if is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
         others_main  = [d for d in all_docs if not is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
         jpnatc_docs  = [d for d in all_docs if _is_jpnatc(d)]

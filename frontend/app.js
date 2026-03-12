@@ -271,7 +271,8 @@ function buildCard(doc, dept) {
   const locLine    = doc.location ? `<div class="cd-row"><span>📍</span><span>${escapeHtml(doc.location)}</span></div>` : "";
   const roomLine   = doc.room     ? `<div class="cd-row"><span>🚪</span><span>${escapeHtml(doc.room)}</span></div>` : "";
   const notesLine  = doc.notes    ? `<div class="cd-row cd-notes"><span>📝</span><span>${escapeHtml(doc.notes)}</span></div>` : "";
-  const deptTag    = dept         ? `<div class="card-dept-label">${escapeHtml(dept)}</div>` : "";
+  const actualDept = doc._dept || dept;
+  const deptTag    = actualDept   ? `<div class="card-dept-label">${escapeHtml(actualDept)}</div>` : "";
   return `
     <div class="doctor-card ${isToday ? "card-today" : ""} ${isJPNATC ? "card-jpnatc" : ""}">
       ${isJPNATC ? '<div class="jpnatc-banner">⚠️ JPNATC — Trauma Centre Only · Walk-in OPD नहीं है</div>' : ""}
