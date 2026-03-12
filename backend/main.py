@@ -560,6 +560,8 @@ class ChatRequest(BaseModel):
     follow_up_count:    int  = 0
     session_id:         str  = ""
     active_intent:      str  = ""   # "doctor_schedule" | "browse_department" | ""
+    age:                int  = None   # pre-filled from age/gender chip row
+    gender:             str  = None   # "male" | "female" | None
 
 
 # ══════════════════════════════════════════════════════════════
@@ -613,6 +615,8 @@ async def chat(request: ChatRequest):
     follow_up_count    = request.follow_up_count    or 0
     session_id         = request.session_id         or ""
     active_intent      = request.active_intent      or ""
+    prefilled_age      = request.age
+    prefilled_gender   = request.gender
 
     # ── STEP 1: PII Scrub ─────────────────────────────────────
     sanitized = sanitize_input(raw_message)
@@ -667,6 +671,12 @@ async def chat(request: ChatRequest):
                     features["body_part"] = "chest"
                 print(f"[LLM1 Rescue] primary set from flag: {complaint}")
                 break
+
+    # Merge prefilled age/gender from chip row if LLM1 didn't extract them
+    if prefilled_age and not features.get("age"):
+        features["age"] = prefilled_age
+    if prefilled_gender and not features.get("gender"):
+        features["gender"] = prefilled_gender
 
     print(f"[Engine] primary={features.get('primary_complaint')} "
           f"flags={[k for k, v in raw_flags.items() if v]}")

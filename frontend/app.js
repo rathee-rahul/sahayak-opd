@@ -10,6 +10,8 @@ let activeIntent = null;   // tracks which tile the user activated: 'doctor_sche
 let followUpCount = 0;
 let confirmedSymptoms = [];
 let deniedSymptoms = [];
+let userAge    = null;   // set by age/gender chip row
+let userGender = null;   // "male" | "female" | null
 
 // ─── TODAY DETECTION ──────────────────────────────────────────────────────────
 const TODAY_NAME = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][new Date().getDay()];
@@ -64,6 +66,8 @@ async function sendMessage(messageText) {
         follow_up_count:    followUpCount,
         confirmed_symptoms: confirmedSymptoms,
         denied_symptoms:    deniedSymptoms,
+        age:                userAge    || null,
+        gender:             userGender || null,
       }),
     });
  
@@ -493,12 +497,60 @@ async function speakText(text) {
  
 
 // ── TILE 1: Symptom Flow ──────────────────────────────────────
+// ─── AGE & GENDER CHIP ROW ────────────────────────────────────────────────────
+function showAgeGenderChips() {
+  // Don't show if already filled this session
+  if (userAge || userGender) return;
+  const chat = document.getElementById("chatArea");
+  const row = document.createElement("div");
+  row.className = "age-gender-row";
+  row.id = "ageGenderRow";
+  row.innerHTML = `
+    <div class="agr-label">बेहतर सुझाव के लिए अपनी उम्र और लिंग बताएं</div>
+    <div class="agr-controls">
+      <button class="agr-chip" id="chipMale"   onclick="selectGender('male')">👤 पुरुष · Male</button>
+      <button class="agr-chip" id="chipFemale" onclick="selectGender('female')">👤 महिला · Female</button>
+      <input  class="agr-age"  id="ageInput" type="number" min="1" max="120"
+              placeholder="उम्र / Age"
+              oninput="setAge(this.value)">
+    </div>
+  `;
+  chat.appendChild(row);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function selectGender(g) {
+  userGender = g;
+  document.getElementById("chipMale")  ?.classList.toggle("agr-chip-active", g === "male");
+  document.getElementById("chipFemale")?.classList.toggle("agr-chip-active", g === "female");
+  maybeCollapseChips();
+}
+
+function setAge(val) {
+  userAge = val ? parseInt(val) : null;
+  maybeCollapseChips();
+}
+
+function maybeCollapseChips() {
+  // Collapse row once both age AND gender are filled
+  if (userAge && userGender) {
+    const row = document.getElementById("ageGenderRow");
+    if (row) {
+      row.classList.add("agr-done");
+      setTimeout(() => row.remove(), 600);
+    }
+  }
+}
+
 function startSymptomFlow() {
   activeIntent = null;
   followUpCount = 0;
   confirmedSymptoms = [];
   deniedSymptoms = [];
+  userAge    = null;
+  userGender = null;
   appendMessage('bot', '<span class="hi">अपनी तकलीफ बताइए — जैसे सिरदर्द, बुखार, पेट दर्द आदि।</span><span class="en">Please describe your symptoms.</span>');
+  showAgeGenderChips();
   const input = document.getElementById('chatInput');
   input.placeholder = 'अपने लक्षण लिखें… · Type your symptoms…';
   input.focus();
