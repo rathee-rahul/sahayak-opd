@@ -330,7 +330,15 @@ function appendMessage(role, text) {
 }
  
 function formatMessage(text) {
-  // Escape HTML first to prevent XSS, then apply safe markdown transforms
+  // If text contains HTML tags (e.g. bilingual <span> from button actions),
+  // render as-is. Otherwise escape first to prevent XSS.
+  if (/<[a-z][\s\S]*>/i.test(text)) {
+    // Trusted internal HTML — apply markdown on top but don't escape
+    return text
+      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.*?)\*/g, "<em>$1</em>")
+      .replace(/\n/g, "<br>");
+  }
   const safe = escapeHtml(text);
   return safe
     .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")

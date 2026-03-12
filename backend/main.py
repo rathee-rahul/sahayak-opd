@@ -782,6 +782,10 @@ async def chat(request: ChatRequest):
         others_main  = [d for d in all_docs if not is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
         jpnatc_docs  = [d for d in all_docs if _is_jpnatc(d)]
         dept_doctors = todays_main + others_main + jpnatc_docs
+        # Override LLM reply for browse — suppress follow-up question
+        clinical["reply"] = f"{final_dept} ke doctors neeche dekh sakte hain."
+        clinical["follow_up_needed"] = False
+        clinical["follow_up_question"] = None
 
     elif is_selfcare:
         dept_doctors = []

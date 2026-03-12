@@ -157,12 +157,13 @@ If engine says is_selfcare = true (isolated mild symptom, adult, short duration)
 → action_advice = "Ghar pe aaram karein. 3 din mein theek na ho toh OPD aayein."
 → follow_up_needed = false
 
-STEP 4 — MISSING AGE/GENDER (ask first, except browse/selfcare):
-If age = null AND gender = null AND primary_complaint is a symptom:
+STEP 4 — MISSING AGE/GENDER (ask ONLY when routing is ambiguous):
+If age = null AND gender = null AND primary_complaint is a symptom AND confidence_gap < 65:
 → final_dept = null
 → follow_up_needed = true
 → follow_up_question = "Aapki umar aur gender kya hai? Isse main sahi department suggest kar sakti hoon."
 → reply = same as follow_up_question
+NOTE: If confidence_gap >= 65, SKIP this step entirely — route directly via Step 5. Age/gender is not needed when routing is already confident.
 
 STEP 5 — CONFIDENT ROUTING (confidence_gap >= 65):
 → THIS IS AN ABSOLUTE RULE. If confidence_gap >= 65, you MUST route now. No follow-up questions. No exceptions.
