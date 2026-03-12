@@ -194,8 +194,82 @@ def build_extractor_messages(sanitized_input: str, history: list) -> list:
     return messages
 
 
-def parse_extractor_response(raw_response: str) -> dict:
+def parse_extractor_response(raw_response: str, raw_input: str = "") -> dict:
+    """
+    Parse LLM1 JSON response. Includes a keyword rescue so primary_complaint
+    is never None when the input is clearly a symptom phrase.
+    raw_input: original sanitized patient message (used for fallback rescue)
+    """
     import json, re
+
+    # ── KEYWORD RESCUE MAP — runs BEFORE and AFTER LLM parsing ──
+    # If primary_complaint ends up None, scan raw_input for these keywords.
+    _SYMPTOM_KEYWORDS = [
+        ("chest pain",          "chest pain",       "chest"),
+        ("seene mein dard",     "chest pain",       "chest"),
+        ("seene mein",          "chest pain",       "chest"),
+        ("chaati mein dard",    "chest pain",       "chest"),
+        ("breathlessness",      "breathlessness",   "chest"),
+        ("breathless",          "breathlessness",   "chest"),
+        ("saans lene mein",     "breathlessness",   "chest"),
+        ("saans ki dikkat",     "breathlessness",   "chest"),
+        ("saans ki takleef",    "breathlessness",   "chest"),
+        ("saans mein dikkat",   "breathlessness",   "chest"),
+        ("difficulty breathing","breathlessness",   "chest"),
+        ("shortness of breath", "breathlessness",   "chest"),
+        ("headache",            "headache",         "head"),
+        ("sar dard",            "sar dard",         "head"),
+        ("sir dard",            "sar dard",         "head"),
+        ("bukhar",              "bukhar",           None),
+        ("fever",               "fever",            None),
+        ("pet dard",            "pet dard",         "pet"),
+        ("stomach pain",        "stomach pain",     "stomach"),
+        ("abdominal pain",      "abdominal pain",   "stomach"),
+        ("knee pain",           "knee pain",        "ghutna"),
+        ("ghutne mein dard",    "knee pain",        "ghutna"),
+        ("back pain",           "back pain",        "kamar"),
+        ("kamar dard",          "kamar dard",       "kamar"),
+        ("vomiting",            "vomiting",         None),
+        ("ulti",                "vomiting",         None),
+        ("dizziness",           "dizziness",        None),
+        ("chakkar",             "chakkar",          None),
+        ("weakness",            "weakness",         None),
+        ("kamzori",             "kamzori",          None),
+        ("khansi",              "khansi",           None),
+        ("cough",               "cough",            None),
+        ("eye pain",            "eye pain",         "eye"),
+        ("aankh dard",          "eye pain",         "eye"),
+        ("ear pain",            "ear pain",         "ear"),
+        ("kaan dard",           "ear pain",         "ear"),
+        ("joint pain",          "joint pain",       None),
+        ("jodon mein dard",     "joint pain",       None),
+        ("skin rash",           "skin rash",        "skin"),
+        ("rash",                "skin rash",        "skin"),
+        ("itching",             "itching",          "skin"),
+        ("khujli",              "khujli",           "skin"),
+        ("burning urination",   "burning urination","urinary"),
+        ("peshaab mein jalan",  "burning urination","urinary"),
+        ("blood in urine",      "blood in urine",   "urinary"),
+        ("anxiety",             "anxiety",          None),
+        ("depression",          "depression",       None),
+        ("diabetes",            "diabetes",         None),
+        ("sugar",               "diabetes",         None),
+        ("thyroid",             "thyroid",          None),
+    ]
+
+    def _rescue(text: str, features: dict) -> dict:
+        if features.get("primary_complaint"):
+            return features  # already extracted, no rescue needed
+        low = text.lower()
+        for keyword, complaint, body in _SYMPTOM_KEYWORDS:
+            if keyword in low:
+                features["primary_complaint"] = complaint
+                if body and not features.get("body_part"):
+                    features["body_part"] = body
+                print(f"[Extractor Rescue] '{keyword}' → primary='{complaint}'")
+                break
+        return features
+
     cleaned = raw_response.strip()
     cleaned = re.sub(r"^```json\s*", "", cleaned)
     cleaned = re.sub(r"^```\s*", "", cleaned)
@@ -213,9 +287,9 @@ def parse_extractor_response(raw_response: str) -> dict:
         features.setdefault("gender", None)
         features.setdefault("body_part", None)
         features.setdefault("context_flags", {})
-        return features
+        return _rescue(raw_input, features)
     except (json.JSONDecodeError, ValueError):
-        return {
+        features = {
             "primary_complaint": None,
             "associated_symptoms": [],
             "negations": [],
@@ -238,6 +312,7 @@ def parse_extractor_response(raw_response: str) -> dict:
                 "is_emergency_self_declared": False,
             }
         }
+        return _rescue(raw_input, features)
 
 
 if __name__ == "__main__":

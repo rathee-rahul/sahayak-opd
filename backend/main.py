@@ -606,7 +606,7 @@ async def chat(request: ChatRequest):
     raw_flags_result, llm1_raw = await asyncio.gather(raw_flags_task, llm1_task)
 
     raw_flags = raw_flags_result
-    features  = parse_extractor_response(llm1_raw)
+    features  = parse_extractor_response(llm1_raw, raw_input=sanitized)
 
     # ── LLM1 RESCUE: if primary_complaint is None but keyword_scan caught flags,
     # synthesize a primary_complaint from the strongest flag so engine can score it.
