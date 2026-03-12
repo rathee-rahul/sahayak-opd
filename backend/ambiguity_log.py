@@ -145,23 +145,16 @@ async def write_log_async(entry: dict) -> None:
     """
     Write one log entry to JSONL file asynchronously.
     Fire-and-forget — never raises, never blocks.
+    Uses asyncio.get_running_loop() which is safe inside FastAPI/ASGI context.
     """
     try:
-        # Ensure logs directory exists
         os.makedirs(LOG_DIR, exist_ok=True)
-
-        # Snapshot current log path (supports test overrides)
         log_path = LOG_FILE
-
-        # Append to JSONL file (one JSON object per line)
         line = json.dumps(entry, ensure_ascii=False) + "\n"
-
-        # Use asyncio to write without blocking event loop
-        loop = asyncio.get_event_loop()
+        # get_running_loop() is safe inside a running async context (unlike get_event_loop)
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _write_line, line, log_path)
-
     except Exception:
-        # Silent fail — logging must NEVER break the main response
         pass
 
 
@@ -187,8 +180,8 @@ async def log_if_ambiguous(
     Master function called from main.py after response is sent.
     Checks if logging is needed, builds entry, writes async.
 
-    Fire-and-forget — call with asyncio.create_task() from main.py:
-      asyncio.create_task(log_if_ambiguous(...))
+    Fire-and-forget — called via FastAPI BackgroundTasks from main.py:
+      background_tasks.add_task(log_if_ambiguous, ...)
 
     Args:
         sanitized_input:    PII-scrubbed patient message

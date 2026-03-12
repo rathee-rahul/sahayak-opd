@@ -45,13 +45,21 @@ async function sendMessage(messageText) {
  
   const typingEl = showTypingIndicator();
 
+  // Disable input while waiting — prevents duplicate sends and race conditions
+  const inputEl  = document.getElementById("chatInput");
+  const sendBtn  = document.getElementById("sendBtn");
+  if (inputEl) inputEl.disabled = true;
+  if (sendBtn) sendBtn.disabled = true;
+
   // If user is in doctor-search mode, ensure backend treats input as a name query.
   // Prepend 'Dr.' only for plain name inputs — not for resolved disambiguation
   // messages (which contain a comma e.g. 'Dr. Rahul Yadav, Dental Surgery')
   // and not if the prefix is already present.
   let messageToSend = text;
   const isResolvedDisambig = text.includes(',');
-  if (activeIntent === 'doctor_schedule' && !text.toLowerCase().startsWith('dr') && !isResolvedDisambig) {
+  // Don't prepend Dr. if input already starts with a title (Dr., Prof., Mr., Mrs.)
+  const hasTitle = /^(dr\.?|prof\.?|mr\.?|mrs\.?)\s/i.test(text);
+  if (activeIntent === 'doctor_schedule' && !hasTitle && !isResolvedDisambig) {
     messageToSend = 'Dr. ' + text;
   }
  
@@ -106,6 +114,9 @@ async function sendMessage(messageText) {
     removeTypingIndicator(typingEl);
     appendMessage("bot", "माफ करें, कोई error आई। थोड़ी देर बाद try करें।");
     console.error(err);
+  } finally {
+    if (inputEl) { inputEl.disabled = false; inputEl.focus(); }
+    if (sendBtn) sendBtn.disabled = false;
   }
 }
  
@@ -242,7 +253,10 @@ function renderDeptDoctors(department, doctors, containerEl, sub_specialty) {
     </div>
   `;
   containerEl.appendChild(wrapper);
-  requestAnimationFrame(() => requestAnimationFrame(() => wrapper.classList.add("visible")));
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    wrapper.classList.add("visible");
+    wrapper.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }));
 }
  
 // ─── XSS HELPER ──────────────────────────────────────────────────────────────

@@ -15,7 +15,7 @@ All other endpoints (/browse-department, /todays-doctors,
 /departments, /doctors) are UNCHANGED from v1.
 """
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -603,7 +603,7 @@ def fetch_doctors_for_dept(department: str, raw_message: str) -> list:
 # ══════════════════════════════════════════════════════════════
 
 @app.post("/chat")
-async def chat(request: ChatRequest):
+async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
 
     raw_message        = request.message
     history            = request.history
@@ -821,8 +821,9 @@ async def chat(request: ChatRequest):
     elif final_dept:
         dept_doctors = fetch_doctors_for_dept(final_dept, sanitized)
 
-    # ── STEP 7: Async ambiguity log ───────────────────────────
-    _log_task = asyncio.create_task(log_if_ambiguous(
+    # ── STEP 7: Async ambiguity log (BackgroundTasks — safe fire-and-forget) ──
+    background_tasks.add_task(
+        log_if_ambiguous,
         sanitized_input    = sanitized,
         features           = features,
         engine_output      = engine_output,
@@ -831,9 +832,6 @@ async def chat(request: ChatRequest):
         denied_symptoms    = denied_symptoms,
         follow_up_count    = follow_up_count,
         session_id         = session_id or None,
-    ))
-    _log_task.add_done_callback(
-        lambda t: t.exception() and print(f"[AmbiguityLog] Error: {t.exception()}")
     )
 
     # ── RESPONSE ──────────────────────────────────────────────
