@@ -180,7 +180,42 @@ function renderAmbiguousResults(query, results, containerEl) {
 }
  
 // ─── RENDER: DEPARTMENT DOCTORS ──────────────────────────────────────────────
+// ─── MERGE DUPLICATE DOCTOR ENTRIES ─────────────────────────────────────────
+// Same doctor may have multiple entries (regular OPD + special clinic).
+// Merge them into one object with an extra_schedules array.
+function mergeDuplicateDoctors(doctors) {
+  const seen = new Map();
+  for (const doc of doctors) {
+    const key = doc.name.toLowerCase().trim();
+    if (!seen.has(key)) {
+      seen.set(key, { ...doc, extra_schedules: [] });
+    } else {
+      const primary = seen.get(key);
+      // Add this entry's schedule as an extra slot
+      primary.extra_schedules.push({
+        sub_specialty: doc.sub_specialty || "",
+        opd_days:      doc.opd_days     || "",
+        opd_timing:    doc.opd_timing   || "",
+        notes:         doc.notes        || "",
+      });
+      // Merge conditions (deduplicate)
+      if (doc.conditions) {
+        const existing = new Set(primary.conditions.split(",").map(s => s.trim().toLowerCase()));
+        const incoming = doc.conditions.split(",").map(s => s.trim());
+        for (const c of incoming) {
+          if (!existing.has(c.toLowerCase())) {
+            primary.conditions += ", " + c;
+            existing.add(c.toLowerCase());
+          }
+        }
+      }
+    }
+  }
+  return [...seen.values()];
+}
+
 function renderDeptDoctors(department, doctors, containerEl, sub_specialty) {
+  doctors = mergeDuplicateDoctors(doctors);
   const todayDocs = doctors.filter(d => isDoctorAvailableToday(d.opd_days));
   const otherDocs = doctors.filter(d => !isDoctorAvailableToday(d.opd_days));
   const sorted    = [...todayDocs, ...otherDocs];
@@ -254,6 +289,13 @@ function buildCard(doc, dept) {
         <div class="cd-row"><span>📅</span><span>${escapeHtml(doc.opd_days) || "—"}</span></div>
         <div class="cd-row"><span>🕐</span><span>${escapeHtml(doc.opd_timing) || "—"}</span></div>
         ${roomLine}${locLine}${centerLine}${notesLine}
+        ${(doc.extra_schedules || []).map(s => `
+          <div class="cd-extra-slot">
+            ${s.sub_specialty ? `<div class="cd-row cd-clinic-label"><span>🏷️</span><span>${escapeHtml(s.sub_specialty)}</span></div>` : ""}
+            <div class="cd-row"><span>📅</span><span>${escapeHtml(s.opd_days) || "—"}</span></div>
+            <div class="cd-row"><span>🕐</span><span>${escapeHtml(s.opd_timing) || "—"}</span></div>
+            ${s.notes ? `<div class="cd-row cd-notes"><span>📝</span><span>${escapeHtml(s.notes)}</span></div>` : ""}
+          </div>`).join("")}
       </div>
       ${subSpec || preferred ? `<div class="card-tags">${subSpec}${preferred}</div>` : ""}
       ${conditions ? `<div class="card-conditions">${conditions}</div>` : ""}

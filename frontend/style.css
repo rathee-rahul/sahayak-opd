@@ -850,3 +850,17 @@
   color: var(--gray-500);
   font-family: 'DM Sans', sans-serif;
 }
+
+/* ── Extra clinic slot inside merged doctor card ─────────────────────────── */
+.cd-extra-slot {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(7, 41, 74, 0.2);
+}
+.cd-clinic-label span:last-child {
+  font-weight: 600;
+  color: #07294a;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
