@@ -549,14 +549,22 @@ def fetch_doctors_for_dept(department: str, raw_message: str) -> list:
     """
     Fetch and sort doctors for a department.
     Condition-match first, falls back to full dept list.
+    Within condition matches: today-available doctors always shown first.
     JPNATC always last.
     """
     if not department or department == "Casualty / Emergency":
         return []
+
+    def _is_jpnatc(d): return (d.get("center", "") or "").upper() == "JPNATC"
+
     all_matches = search_by_condition(raw_message, preferred_dept=department)
     if all_matches:
         matched = [m["doctor"] for m in all_matches[:10]]
-        return _sort_jpnatc_last(matched)
+        today_non_j = [d for d in matched if is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
+        other_non_j = [d for d in matched if not is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
+        jpnatc      = [d for d in matched if _is_jpnatc(d)]
+        return today_non_j + other_non_j + jpnatc
+
     all_docs = DOCTOR_DATA.get(department, [])
     return _sort_jpnatc_last(all_docs)
 
