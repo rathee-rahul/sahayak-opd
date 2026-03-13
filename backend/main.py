@@ -477,6 +477,12 @@ def call_gemini(system_prompt: str, messages: list, max_tokens: int = 512, label
             "temperature": 0.2,
             "maxOutputTokens": max_tokens,
             "responseMimeType": "application/json",  # force JSON output
+        },
+        # Disable thinking for Gemini 2.5 Flash — thinking uses thousands of tokens
+        # and causes empty/truncated responses when max_tokens is low (<=1024).
+        # For a routing assistant, thinking is overkill and adds latency.
+        "thinkingConfig": {
+            "thinkingBudget": 0
         }
     }
 
@@ -542,7 +548,7 @@ async def call_llm_async(
     system_prompt: str, messages: list, max_tokens: int = 512, label: str = ""
 ) -> str:
     """Async wrapper — runs LLM call in thread pool."""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()   # get_event_loop() deprecated in Python 3.10+
     return await loop.run_in_executor(
         None, call_llm, system_prompt, messages, max_tokens, label
     )
@@ -632,13 +638,11 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     # ── STEP 2: Parallel — keyword_scan + LLM 1 ──────────────
     extractor_messages = build_extractor_messages(sanitized, history)
 
-    raw_flags_task = asyncio.get_event_loop().run_in_executor(
-        None, keyword_scan, sanitized
-    )
+    raw_flags_task = asyncio.to_thread(keyword_scan, sanitized)
     llm1_task = call_llm_async(
         system_prompt = EXTRACTOR_SYSTEM_PROMPT,
         messages      = extractor_messages,
-        max_tokens    = 400,
+        max_tokens    = 600,       # was 400 — extractor JSON can be large
         label         = "LLM1"
     )
 
@@ -700,7 +704,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     llm2_raw = await call_llm_async(
         system_prompt = CLINICAL_SYSTEM_PROMPT,
         messages      = clinical_messages,
-        max_tokens    = 512,
+        max_tokens    = 800,       # was 512 — clinical JSON + Hinglish reply needs more room
         label         = "LLM2"
     )
 

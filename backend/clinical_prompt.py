@@ -81,6 +81,7 @@ OUTPUT FORMAT — EXACTLY THIS JSON, NOTHING ELSE:
   "severity": "urgent | routine | selfcare",
   "confidence": integer 0-100,
   "python_correct": true or false,
+  "referral_required": true or false,
   "reason": "1-2 line Hinglish explanation WHY this department (for patient)",
   "action_advice": "Specific action — e.g. 'Aaj hi OPD visit karein' or 'Appointment lijiye'",
   "follow_up_needed": true or false,
@@ -564,6 +565,7 @@ def parse_clinical_response(raw_response: str) -> dict:
         output.setdefault("severity", "routine")
         output.setdefault("confidence", 50)
         output.setdefault("python_correct", True)
+        output.setdefault("referral_required", False)
         output.setdefault("reason", None)
         output.setdefault("action_advice", None)
         output.setdefault("follow_up_needed", False)
@@ -582,6 +584,7 @@ def parse_clinical_response(raw_response: str) -> dict:
             "severity":          "routine",
             "confidence":        0,
             "python_correct":    True,
+            "referral_required": False,
             "reason":            None,
             "action_advice":     None,
             "follow_up_needed":  True,
