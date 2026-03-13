@@ -82,17 +82,22 @@ async function sendMessage(messageText) {
     const data = await res.json();
     removeTypingIndicator(typingEl);
 
+    // Guard: if backend returned error or missing reply, show fallback
+    if (!res.ok || !data.reply) {
+      appendMessage("bot", "माफ करें, कोई error आई। थोड़ी देर बाद try करें।");
+      console.error("Backend error:", res.status, data);
+      return;
+    }
+
     // Update session state from backend response
     if (typeof data.follow_up_count === "number") followUpCount = data.follow_up_count;
-    // Only reset symptom memory when a new symptom flow starts (handled in startSymptomFlow)
-    // Do NOT reset here — symptoms from this turn are still needed for follow-ups
 
     // Reset intent after every response — user must click a tile again to re-activate
     if (data.intent && data.intent !== 'doctor_schedule') activeIntent = null;
- 
+
     const msgWrapper = appendMessage("bot", data.reply);
     if (data.show_advisory) appendAdvisoryNote(msgWrapper);
- 
+
     if (data.doctor_results && data.doctor_results.length > 0) {
       if (data.ambiguous) {
         renderAmbiguousResults(data.doctor_query, data.doctor_results, msgWrapper);
@@ -100,15 +105,15 @@ async function sendMessage(messageText) {
         renderNameSearchResults(data.doctor_query, data.doctor_results, msgWrapper);
       }
     }
- 
+
     // Department doctors
     if (!data.doctor_query && data.department && data.doctors && data.doctors.length > 0) {
       renderDeptDoctors(data.department, data.doctors, msgWrapper, data.sub_specialty);
     }
- 
+
     conversationHistory.push({ role: "assistant", content: data.reply });
- 
-    speakText(data.reply);
+
+    speakText(data.reply || "");
  
   } catch (err) {
     removeTypingIndicator(typingEl);

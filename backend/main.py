@@ -19,6 +19,7 @@ from fastapi import FastAPI, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from typing import Optional
 from dotenv import load_dotenv
 import asyncio, os, sys, json, re, requests
 from datetime import datetime
@@ -566,8 +567,8 @@ class ChatRequest(BaseModel):
     follow_up_count:    int  = 0
     session_id:         str  = ""
     active_intent:      str  = ""   # "doctor_schedule" | "browse_department" | ""
-    age:                int  = None   # pre-filled from age/gender chip row
-    gender:             str  = None   # "male" | "female" | None
+    age:                Optional[int] = None   # pre-filled from age/gender chip row
+    gender:             Optional[str] = None   # "male" | "female" | None
 
 
 # ══════════════════════════════════════════════════════════════
