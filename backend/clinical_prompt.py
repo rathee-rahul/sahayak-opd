@@ -260,6 +260,10 @@ UROLOGY vs NEPHROLOGY:
 NEUROLOGY vs NEUROSURGERY:
 - Medical: epilepsy, migraine, neuropathy, Parkinson → Neurology
 - Surgical: tumor, disc, trauma, hydrocephalus → Neurosurgery
+- SPINE STRUCTURAL DEFECTS always → Neurosurgery (spine unit at AIIMS):
+  spondylolysis, spondylolisthesis, pars intercularis fracture, vertebral fracture,
+  spinal compression fracture, burst fracture, spinal instability, lumbar fusion,
+  craniovertebral junction (CVJ) problems, atlanto-axial dislocation
 
 ENT vs NEUROLOGY:
 - Dizziness/vertigo alone → ENT
