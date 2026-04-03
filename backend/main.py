@@ -19,7 +19,6 @@ from fastapi import FastAPI, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Optional
 from dotenv import load_dotenv
 import asyncio, os, sys, json, re, requests
 from datetime import datetime
@@ -210,6 +209,9 @@ _CONCEPT_KEYWORDS = {
     "neurology":    "Neurology (Brain & Nerves)",
     # Neurosurgery must come BEFORE "neuro" so substring match hits it first
     "neurosurgery": "Neurosurgery (Brain Surgery)",
+    "neuro surgery": "Neurosurgery (Brain Surgery)",  # with space
+    "neuro surgeon": "Neurosurgery (Brain Surgery)",
+    "brain surgeon": "Neurosurgery (Brain Surgery)",
     "brain surgery":"Neurosurgery (Brain Surgery)",
     "brain tumor":  "Neurosurgery (Brain Surgery)",
     "brain tumour": "Neurosurgery (Brain Surgery)",
@@ -264,7 +266,11 @@ def extract_browse_dept(message: str) -> str | None:
     for keyword, dept in _CONCEPT_KEYWORDS.items():
         if keyword.startswith("#"):
             continue
-        matched = keyword in words if len(keyword) <= 4 else keyword in msg_lower
+        # Multi-word keywords (e.g. "neuro surgery") — always substring match
+        if " " in keyword:
+            matched = keyword in msg_lower
+        else:
+            matched = keyword in words if len(keyword) <= 4 else keyword in msg_lower
         if matched:
             # Guard: don't let "neuro" match when message clearly says "neurosurgery"
             if keyword == "neuro" and "surgery" in msg_lower:
@@ -478,12 +484,6 @@ def call_gemini(system_prompt: str, messages: list, max_tokens: int = 512, label
             "temperature": 0.2,
             "maxOutputTokens": max_tokens,
             "responseMimeType": "application/json",  # force JSON output
-        },
-        # Disable thinking for Gemini 2.5 Flash — thinking uses thousands of tokens
-        # and causes empty/truncated responses when max_tokens is low (<=1024).
-        # For a routing assistant, thinking is overkill and adds latency.
-        "thinkingConfig": {
-            "thinkingBudget": 0
         }
     }
 
@@ -549,7 +549,7 @@ async def call_llm_async(
     system_prompt: str, messages: list, max_tokens: int = 512, label: str = ""
 ) -> str:
     """Async wrapper — runs LLM call in thread pool."""
-    loop = asyncio.get_running_loop()   # get_event_loop() deprecated in Python 3.10+
+    loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
         None, call_llm, system_prompt, messages, max_tokens, label
     )
@@ -567,42 +567,89 @@ class ChatRequest(BaseModel):
     follow_up_count:    int  = 0
     session_id:         str  = ""
     active_intent:      str  = ""   # "doctor_schedule" | "browse_department" | ""
-    age:                Optional[int] = None   # pre-filled from age/gender chip row
-    gender:             Optional[str] = None   # "male" | "female" | None
+    age:                int  = None   # pre-filled from age/gender chip row
+    gender:             str  = None   # "male" | "female" | None
 
 
 # ══════════════════════════════════════════════════════════════
 # DOCTOR FETCH HELPER
 # ══════════════════════════════════════════════════════════════
 
-def fetch_doctors_for_dept(department: str, raw_message: str) -> list:
+def fetch_doctors_for_dept(department: str, raw_message: str, features: dict = None) -> list:
     """
     Fetch and sort doctors for a department.
-    Condition-match first, falls back to full dept list.
-    ONLY returns doctors from the specified department — no cross-dept bleed.
-    Within matches: today-available doctors always shown first.
-    JPNATC always last.
+    Priority order:
+      1. Sub-specialty match + available today (e.g. Paediatric Pulmonology for child with cough)
+      2. Condition match + available today
+      3. Sub-specialty match + not today
+      4. Condition match + not today
+      5. All other dept doctors
+      6. JPNATC always last
     """
     if not department or department == "Casualty / Emergency":
         return []
 
     def _is_jpnatc(d): return (d.get("center", "") or "").upper() == "JPNATC"
 
-    all_matches = search_by_condition(raw_message, preferred_dept=department)
-    # CRITICAL: filter to preferred dept only — cross-dept matches are irrelevant here
-    dept_matches = [m for m in all_matches if m["dept"] == department]
-    if dept_matches:
-        # Attach the doctor's own dept to the object so buildCard labels it correctly
-        matched = [{**m["doctor"], "_dept": m["dept"]} for m in dept_matches[:10]]
-        today_non_j = [d for d in matched if is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
-        other_non_j = [d for d in matched if not is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
-        jpnatc      = [d for d in matched if _is_jpnatc(d)]
-        return today_non_j + other_non_j + jpnatc
+    # ── Build sub-specialty keywords from features ──────────────────────────
+    # e.g. if patient is 13yo with cough → boost "paediatric pulmonology" doctors
+    sub_spec_keywords = []
+    if features:
+        primary   = (features.get("primary_complaint") or "").lower()
+        age       = features.get("age")
+        associated = [s.lower() for s in (features.get("associated_symptoms") or [])]
+        all_symptoms = primary + " " + " ".join(associated)
 
-    # Fallback: no condition match in dept — show all dept doctors
-    all_docs = DOCTOR_DATA.get(department, [])
-    tagged = [{**d, "_dept": department} for d in all_docs]
-    return _sort_jpnatc_last(tagged)
+        # Child + respiratory → Paediatric Pulmonology
+        if age and int(age) <= 14:
+            if any(w in all_symptoms for w in ["cough", "khansi", "breath", "saans", "asthma", "wheeze", "tb"]):
+                sub_spec_keywords.append("pulmonol")
+            if any(w in all_symptoms for w in ["kidney", "urine", "peshaab", "nephro"]):
+                sub_spec_keywords.append("nephrol")
+            if any(w in all_symptoms for w in ["joint", "arthrit", "autoimmune"]):
+                sub_spec_keywords.append("rheumatol")
+            if any(w in all_symptoms for w in ["seizure", "epilepsy", "autism", "neuro", "develop"]):
+                sub_spec_keywords.append("neurolog")
+            if any(w in all_symptoms for w in ["cancer", "leukaemia", "tumour", "oncol"]):
+                sub_spec_keywords.append("oncol")
+            if any(w in all_symptoms for w in ["diabetes", "thyroid", "growth", "hormone", "endocrin"]):
+                sub_spec_keywords.append("endocrin")
+
+    def _matches_sub_spec(d):
+        if not sub_spec_keywords:
+            return False
+        combined = (d.get("sub_specialty", "") + " " + d.get("conditions", "")).lower()
+        return any(kw in combined for kw in sub_spec_keywords)
+
+    all_matches = search_by_condition(raw_message, preferred_dept=department)
+    dept_matches = [m for m in all_matches if m["dept"] == department]
+
+    if dept_matches:
+        matched = [{**m["doctor"], "_dept": m["dept"]} for m in dept_matches[:15]]
+    else:
+        # Fallback: use all dept doctors
+        all_docs = DOCTOR_DATA.get(department, [])
+        matched = [{**d, "_dept": department} for d in all_docs]
+
+    # Sort into priority buckets
+    sub_today   = [d for d in matched if _matches_sub_spec(d) and is_available_today(d.get("opd_days","")) and not _is_jpnatc(d)]
+    sub_other   = [d for d in matched if _matches_sub_spec(d) and not is_available_today(d.get("opd_days","")) and not _is_jpnatc(d)]
+    rest_today  = [d for d in matched if not _matches_sub_spec(d) and is_available_today(d.get("opd_days","")) and not _is_jpnatc(d)]
+    rest_other  = [d for d in matched if not _matches_sub_spec(d) and not is_available_today(d.get("opd_days","")) and not _is_jpnatc(d)]
+    jpnatc      = [d for d in matched if _is_jpnatc(d)]
+
+    result = sub_today + sub_other + rest_today + rest_other + jpnatc
+
+    # Deduplicate by name (keep first occurrence = highest priority)
+    seen = set()
+    deduped = []
+    for d in result:
+        key = d.get("name","").lower().strip()
+        if key not in seen:
+            seen.add(key)
+            deduped.append(d)
+
+    return deduped
 
 
 # ══════════════════════════════════════════════════════════════
@@ -639,11 +686,13 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     # ── STEP 2: Parallel — keyword_scan + LLM 1 ──────────────
     extractor_messages = build_extractor_messages(sanitized, history)
 
-    raw_flags_task = asyncio.to_thread(keyword_scan, sanitized)
+    raw_flags_task = asyncio.get_event_loop().run_in_executor(
+        None, keyword_scan, sanitized
+    )
     llm1_task = call_llm_async(
         system_prompt = EXTRACTOR_SYSTEM_PROMPT,
         messages      = extractor_messages,
-        max_tokens    = 600,       # was 400 — extractor JSON can be large
+        max_tokens    = 400,
         label         = "LLM1"
     )
 
@@ -705,7 +754,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     llm2_raw = await call_llm_async(
         system_prompt = CLINICAL_SYSTEM_PROMPT,
         messages      = clinical_messages,
-        max_tokens    = 800,       # was 512 — clinical JSON + Hinglish reply needs more room
+        max_tokens    = 512,
         label         = "LLM2"
     )
 
@@ -824,7 +873,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
         dept_doctors = []
 
     elif final_dept:
-        dept_doctors = fetch_doctors_for_dept(final_dept, sanitized)
+        dept_doctors = fetch_doctors_for_dept(final_dept, sanitized, features=features)
 
     # ── STEP 7: Async ambiguity log (BackgroundTasks — safe fire-and-forget) ──
     background_tasks.add_task(
