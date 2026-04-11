@@ -484,23 +484,8 @@ def build_clinical_messages(
     denied_symptoms: list,
     follow_up_count: int,
 ) -> list:
-    """
-    Build the messages array for LLM 2 API call.
-
-    Args:
-        features:           dict from extractor_prompt (LLM 1 output)
-        engine_output:      dict from engine.run_engine()
-        history:            last 4 messages [{"role":..., "content":...}]
-        confirmed_symptoms: list of symptoms patient has confirmed
-        denied_symptoms:    list of symptoms patient has denied
-        follow_up_count:    how many follow-up questions already asked (max 2)
-
-    Returns:
-        messages list ready for Groq/Cerebras API call
-    """
     import json
 
-    # Build context payload for LLM 2
     context = {
         "features": features,
         "engine_output": {
@@ -519,7 +504,6 @@ def build_clinical_messages(
 
     messages = []
 
-    # Add last 4 history messages for conversational context
     recent_history = history[-4:] if len(history) > 4 else history
     for msg in recent_history:
         messages.append({
@@ -527,7 +511,6 @@ def build_clinical_messages(
             "content": msg["content"]
         })
 
-    # Final user message = structured context for LLM 2
     messages.append({
         "role": "user",
         "content": (
@@ -543,28 +526,32 @@ def build_clinical_messages(
 def parse_clinical_response(raw_response: str) -> dict:
     """
     Parse LLM 2 JSON response safely.
-    Returns clinical output dict or safe fallback.
-
-    Args:
-        raw_response: raw string from LLM 2
-
-    Returns:
-        clinical output dict
+    ── FIX: Extract JSON object even when Gemini adds surrounding text ──
     """
     import json
     import re
 
-    # Strip markdown fences
+    # Debug log — shows exactly what Gemini returned
+    print(f"[LLM2 RAW] {repr(raw_response[:300])}")
+
     cleaned = raw_response.strip()
-    cleaned = re.sub(r"^```json\s*", "", cleaned)
+
+    # Strip markdown fences
+    cleaned = re.sub(r"^```json\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"^```\s*", "", cleaned)
     cleaned = re.sub(r"\s*```$", "", cleaned)
     cleaned = cleaned.strip()
 
+    # ── KEY FIX: Extract JSON object even if Gemini wraps it in extra text ──
+    # Gemini 2.5 Flash sometimes adds a preamble like "Here is the JSON:"
+    # before the actual JSON object. This regex finds the JSON regardless.
+    json_match = re.search(r'\{.*\}', cleaned, re.DOTALL)
+    if json_match:
+        cleaned = json_match.group(0)
+
     try:
         output = json.loads(cleaned)
 
-        # Ensure required keys with safe defaults
         output.setdefault("final_dept", None)
         output.setdefault("severity", "routine")
         output.setdefault("confidence", 50)
@@ -581,8 +568,8 @@ def parse_clinical_response(raw_response: str) -> dict:
         )
         return output
 
-    except (json.JSONDecodeError, ValueError):
-        # Safe fallback — generic helpful response
+    except (json.JSONDecodeError, ValueError) as e:
+        print(f"[LLM2 PARSE ERROR] {e} | cleaned='{cleaned[:200]}'")
         return {
             "final_dept":        None,
             "severity":          "routine",
@@ -608,7 +595,6 @@ if __name__ == "__main__":
     print(f"Estimated tokens     : ~{len(CLINICAL_SYSTEM_PROMPT)//4}")
     print()
 
-    # Test build_clinical_messages
     sample_features = {
         "primary_complaint": "chest pain",
         "associated_symptoms": ["palpitations"],
@@ -636,9 +622,9 @@ if __name__ == "__main__":
     sample_engine = {
         "show_advisory": True,
         "is_selfcare": False,
-        "top3": [{"dept": "Casualty / Emergency", "score": 32}, {"dept": "Cardiology (Heart)", "score": 22}],
+        "top3": [{"dept": "Cardiology (Heart)", "score": 32}, {"dept": "Pulmonary Medicine", "score": 22}],
         "confidence_gap": 31,
-        "severity": "emergency",
+        "severity": "urgent",
     }
 
     msgs = build_clinical_messages(
@@ -654,30 +640,35 @@ if __name__ == "__main__":
     print(f"   Content preview    : {msgs[-1]['content'][:120]}...")
     print()
 
-    # Test parse_clinical_response — valid
+    # Test parse — valid JSON
     valid = '''{
         "final_dept": "Cardiology (Heart)",
         "severity": "urgent",
         "confidence": 100,
         "python_correct": true,
-        "reason": "Chest pain + breathlessness ke liye Cardiology mein doctor se milna chahiye.",
+        "reason": "Chest pain ke liye Cardiology zaroori hai.",
         "action_advice": "Aaj hi Cardiology OPD visit karein.",
         "follow_up_needed": false,
         "follow_up_question": null,
-        "reply": "Aapke symptoms ke liye Cardiology (Heart) OPD mein doctor se milein. Neeche is department ke doctors dekh skte hain. Agar takleef achanak bahut badh jaaye ya saans lene mein dikkat ho — Casualty bhi 24×7 available hai.",
+        "reply": "Cardiology (Heart) OPD mein jaayein. Neeche doctors dekh skte hain.",
         "disclaimer": "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge."
     }'''
     parsed = parse_clinical_response(valid)
     print(f"✅ Valid JSON parsed   : final_dept={parsed['final_dept']}, severity={parsed['severity']}")
 
-    # Test parse_clinical_response — fenced
-    fenced = "```json\n" + valid + "\n```"
-    parsed2 = parse_clinical_response(fenced)
-    print(f"✅ Fenced JSON parsed  : final_dept={parsed2['final_dept']}")
+    # Test parse — JSON with surrounding text (Gemini 2.5 issue)
+    wrapped = "Here is the routing decision:\n" + valid + "\nHope this helps."
+    parsed2 = parse_clinical_response(wrapped)
+    print(f"✅ Wrapped JSON parsed : final_dept={parsed2['final_dept']} (should be Cardiology)")
 
-    # Test parse_clinical_response — broken → fallback
-    parsed3 = parse_clinical_response("Sorry, I cannot help with this.")
-    print(f"✅ Broken fallback     : follow_up_needed={parsed3['follow_up_needed']} (True = correct)")
+    # Test parse — fenced
+    fenced = "```json\n" + valid + "\n```"
+    parsed3 = parse_clinical_response(fenced)
+    print(f"✅ Fenced JSON parsed  : final_dept={parsed3['final_dept']}")
+
+    # Test parse — broken → fallback
+    parsed4 = parse_clinical_response("Sorry, I cannot help with this.")
+    print(f"✅ Broken fallback     : follow_up_needed={parsed4['follow_up_needed']} (True = correct)")
 
     print()
     print(f"── All checks passed ✅ ──────────────────────────────")
