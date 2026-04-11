@@ -71,10 +71,10 @@ async function sendMessage(messageText) {
         message:            messageToSend,
         history:            conversationHistory.slice(-10),
         active_intent:      activeIntent || "",
-        follow_up_count:    followUpCount,
-        confirmed_symptoms: confirmedSymptoms,
-        denied_symptoms:    deniedSymptoms,
-        age:                userAge    || null,
+        follow_up_count:    followUpCount || 0,
+        confirmed_symptoms: confirmedSymptoms || [],
+        denied_symptoms:    deniedSymptoms    || [],
+        age:                userAge    ? parseInt(userAge, 10) : null,
         gender:             userGender || null,
       }),
     });
@@ -355,10 +355,6 @@ function toggleVoice() {
  
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   recognition = new SR();
-  // "en-IN" gives Hinglish — English medical words stay English ("breast lump",
-  // "chest pain") while Hindi words also work ("bukhar", "dard", "pet mein").
-  // "hi-IN" forced pure Devanagari which broke matching for English loanwords
-  // like ब्रेस्ट→bresta, लैंप→lainpa, हार्ट→harta etc.
   recognition.lang = "en-IN";
   recognition.interimResults = false;
  
@@ -473,7 +469,6 @@ async function speakText(text) {
   window.speechSynthesis.speak(utt);
 }
  
-
 // ── TILE 1: Symptom Flow ──────────────────────────────────────
 // ─── AGE & GENDER CHIP ROW ────────────────────────────────────────────────────
 function showAgeGenderChips() {
@@ -505,7 +500,7 @@ function selectGender(g) {
 }
 
 function setAge(val) {
-  userAge = val ? parseInt(val) : null;
+  userAge = val ? parseInt(val, 10) : null;
   maybeCollapseChips();
 }
 
