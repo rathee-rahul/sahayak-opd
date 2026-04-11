@@ -94,9 +94,6 @@ REFERRAL_REQUIRED_DEPTS = {
 from departments import DEPARTMENTS
 
 # ── HINDI KEYWORD → DEPARTMENT MAP ────────────────────────────
-# Only needed for Hindi words that transliterate too differently
-# from English to fuzzy-match (e.g. "nyurolaji" ≠ "neurology").
-# Pure English/Hinglish queries go straight to fuzzy matching.
 _HINDI_DEPT_KEYWORDS = {
     # Cardiology
     "कार्डियोलॉजी":"Cardiology (Heart)",   "हृदय":"Cardiology (Heart)",
@@ -217,6 +214,10 @@ _CONCEPT_KEYWORDS = {
     "head injury":  "Neurosurgery (Brain Surgery)",
     "nyurosarjari": "Neurosurgery (Brain Surgery)",
     "neuro":        "Neurology (Brain & Nerves)",
+    # ── ADDED: varicose vein ──
+    "varicose":      "Surgery (General)",
+    "varicose vein": "Surgery (General)",
+    "varicose veins":"Surgery (General)",
 }
 
 # ── BROWSE DEPARTMENT EXTRACTOR ───────────────────────────────
@@ -335,8 +336,10 @@ _VIRAMA = '्'
 
 
 def transliterate_hindi(text: str) -> str:
+    # ── FIX: Only transliterate if Hindi characters are actually present ──
+    # Previously this ran on ALL text including English, corrupting it.
     if not any('\u0900' <= ch <= '\u097F' for ch in text):
-        return text
+        return text  # English/Hinglish — return unchanged
 
     out = []
     chars = list(text)
@@ -502,7 +505,7 @@ async def call_llm_async(
 
 
 # ══════════════════════════════════════════════════════════════
-# REQUEST MODEL  ← THE FIX IS HERE
+# REQUEST MODEL
 # ══════════════════════════════════════════════════════════════
 
 class ChatRequest(BaseModel):
@@ -513,8 +516,8 @@ class ChatRequest(BaseModel):
     follow_up_count:    int  = 0
     session_id:         str  = ""
     active_intent:      str  = ""
-    age:                Optional[int] = None   # ← FIXED: accepts null from frontend
-    gender:             Optional[str] = None   # ← FIXED: accepts null from frontend
+    age:                Optional[int] = None
+    gender:             Optional[str] = None
 
 
 # ══════════════════════════════════════════════════════════════
@@ -603,10 +606,15 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     if was_sanitized(raw_message, sanitized):
         print("[PII] Input scrubbed")
 
+    # ── FIX: Only transliterate Hindi text. English input is passed through unchanged. ──
     original_for_log = sanitized
-    sanitized = transliterate_hindi(sanitized)
-    if sanitized != original_for_log:
-        print(f"[Transliterate] '{original_for_log[:50]}' → '{sanitized[:50]}'")
+    if any('\u0900' <= ch <= '\u097F' for ch in sanitized):
+        sanitized = transliterate_hindi(sanitized)
+        print(f"[Transliterate] Hindi detected → '{sanitized[:50]}'")
+    else:
+        print(f"[Transliterate] Skipped — English/Hinglish input: '{sanitized[:50]}'")
+
+    print(f"[Input] raw='{raw_message[:60]}' sanitized='{sanitized[:60]}'")
 
     extractor_messages = build_extractor_messages(sanitized, history)
 
@@ -622,8 +630,13 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
 
     raw_flags_result, llm1_raw = await asyncio.gather(raw_flags_task, llm1_task)
 
+    print(f"[LLM1 RAW] {repr(llm1_raw[:300])}")
+
     raw_flags = raw_flags_result
-    features  = parse_extractor_response(llm1_raw, raw_input=sanitized)
+    # ── FIX: Pass original raw_message as fallback so rescue works even if sanitized changed ──
+    features  = parse_extractor_response(llm1_raw, raw_input=sanitized if sanitized else raw_message)
+
+    print(f"[LLM1 Features] primary='{features.get('primary_complaint')}' age={features.get('age')} gender={features.get('gender')}")
 
     if not features.get("primary_complaint") and raw_flags:
         _FLAG_TO_COMPLAINT = {

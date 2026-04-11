@@ -129,6 +129,7 @@ DIZZY:        chakkar, ghabrahat
 WEAKNESS:     kamzori, thakaan, takat nahi
 SWELLING:     sujan, phoolna, bloating
 SKIN:         chamdi, khaaj, khujli, daane
+VEINS:        varicose, naso mein sujan, pair ki nase, legs ki nase
 
 SEVERITY:     halka (mild), tez/zyada/bahut (moderate-severe), thoda (mild)
 TIME:         din (days), hafte (weeks), mahine (months), saal (years), abhi (now)
@@ -144,6 +145,12 @@ OUTPUT: {"primary_complaint":"chest pain","associated_symptoms":["breathlessness
 
 INPUT: "Meri beti 6 saal ki hai, usse kafi din se khansi aa rahi hai, bukhar nahi hai"
 OUTPUT: {"primary_complaint":"khansi","associated_symptoms":[],"negations":["bukhar"],"severity_hint":null,"onset":null,"duration":"kafi din se","age":6,"gender":"female","body_part":null,"context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":true,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":false,"is_browse_request":false,"is_emergency_self_declared":false}}
+
+INPUT: "i have varicose vein problem"
+OUTPUT: {"primary_complaint":"varicose veins","associated_symptoms":[],"negations":[],"severity_hint":null,"onset":null,"duration":null,"age":null,"gender":null,"body_part":"leg","context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":false,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":false,"is_browse_request":false,"is_emergency_self_declared":false}}
+
+INPUT: "mere legs mein pain aur swelling hai"
+OUTPUT: {"primary_complaint":"leg pain","associated_symptoms":["leg swelling"],"negations":[],"severity_hint":null,"onset":null,"duration":null,"age":null,"gender":null,"body_part":"leg","context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":false,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":false,"is_browse_request":false,"is_emergency_self_declared":false}}
 
 INPUT: "Dr. Neeraj Nischal ka OPD schedule batao"
 OUTPUT: {"primary_complaint":null,"associated_symptoms":[],"negations":[],"severity_hint":null,"onset":null,"duration":null,"age":null,"gender":null,"body_part":null,"context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":false,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":true,"is_browse_request":false,"is_emergency_self_declared":false}}
@@ -202,59 +209,95 @@ def parse_extractor_response(raw_response: str, raw_input: str = "") -> dict:
     """
     import json, re
 
-    # ── KEYWORD RESCUE MAP — runs BEFORE and AFTER LLM parsing ──
-    # If primary_complaint ends up None, scan raw_input for these keywords.
+    # ── KEYWORD RESCUE MAP ──
+    # Runs AFTER LLM parsing if primary_complaint is still None.
+    # Scans raw_input for known symptom keywords and sets primary_complaint.
+    # ── ADDED: varicose vein, leg pain, leg swelling, swelling keywords ──
     _SYMPTOM_KEYWORDS = [
-        ("chest pain",          "chest pain",       "chest"),
-        ("seene mein dard",     "chest pain",       "chest"),
-        ("seene mein",          "chest pain",       "chest"),
-        ("chaati mein dard",    "chest pain",       "chest"),
-        ("breathlessness",      "breathlessness",   "chest"),
-        ("breathless",          "breathlessness",   "chest"),
-        ("saans lene mein",     "breathlessness",   "chest"),
-        ("saans ki dikkat",     "breathlessness",   "chest"),
-        ("saans ki takleef",    "breathlessness",   "chest"),
-        ("saans mein dikkat",   "breathlessness",   "chest"),
-        ("difficulty breathing","breathlessness",   "chest"),
-        ("shortness of breath", "breathlessness",   "chest"),
-        ("headache",            "headache",         "head"),
-        ("sar dard",            "sar dard",         "head"),
-        ("sir dard",            "sar dard",         "head"),
-        ("bukhar",              "bukhar",           None),
-        ("fever",               "fever",            None),
-        ("pet dard",            "pet dard",         "pet"),
-        ("stomach pain",        "stomach pain",     "stomach"),
-        ("abdominal pain",      "abdominal pain",   "stomach"),
-        ("knee pain",           "knee pain",        "ghutna"),
-        ("ghutne mein dard",    "knee pain",        "ghutna"),
-        ("back pain",           "back pain",        "kamar"),
-        ("kamar dard",          "kamar dard",       "kamar"),
-        ("vomiting",            "vomiting",         None),
-        ("ulti",                "vomiting",         None),
-        ("dizziness",           "dizziness",        None),
-        ("chakkar",             "chakkar",          None),
-        ("weakness",            "weakness",         None),
-        ("kamzori",             "kamzori",          None),
-        ("khansi",              "khansi",           None),
-        ("cough",               "cough",            None),
-        ("eye pain",            "eye pain",         "eye"),
-        ("aankh dard",          "eye pain",         "eye"),
-        ("ear pain",            "ear pain",         "ear"),
-        ("kaan dard",           "ear pain",         "ear"),
-        ("joint pain",          "joint pain",       None),
-        ("jodon mein dard",     "joint pain",       None),
-        ("skin rash",           "skin rash",        "skin"),
-        ("rash",                "skin rash",        "skin"),
-        ("itching",             "itching",          "skin"),
-        ("khujli",              "khujli",           "skin"),
-        ("burning urination",   "burning urination","urinary"),
-        ("peshaab mein jalan",  "burning urination","urinary"),
-        ("blood in urine",      "blood in urine",   "urinary"),
-        ("anxiety",             "anxiety",          None),
-        ("depression",          "depression",       None),
-        ("diabetes",            "diabetes",         None),
-        ("sugar",               "diabetes",         None),
-        ("thyroid",             "thyroid",          None),
+        # Varicose / leg vein — ADDED
+        ("varicose vein",       "varicose veins",    "leg"),
+        ("varicose veins",      "varicose veins",    "leg"),
+        ("varicose",            "varicose veins",    "leg"),
+        ("naso mein sujan",     "varicose veins",    "leg"),
+        ("pair ki nase",        "varicose veins",    "leg"),
+        # Leg symptoms — ADDED
+        ("leg pain",            "leg pain",          "leg"),
+        ("leg swelling",        "leg swelling",      "leg"),
+        ("pair mein dard",      "leg pain",          "leg"),
+        ("pair mein sujan",     "leg swelling",      "leg"),
+        ("legs mein pain",      "leg pain",          "leg"),
+        ("legs mein swelling",  "leg swelling",      "leg"),
+        # Swelling general — ADDED
+        ("swelling",            "swelling",          None),
+        ("sujan",               "swelling",          None),
+        # Chest
+        ("chest pain",          "chest pain",        "chest"),
+        ("seene mein dard",     "chest pain",        "chest"),
+        ("seene mein",          "chest pain",        "chest"),
+        ("chaati mein dard",    "chest pain",        "chest"),
+        ("breathlessness",      "breathlessness",    "chest"),
+        ("breathless",          "breathlessness",    "chest"),
+        ("saans lene mein",     "breathlessness",    "chest"),
+        ("saans ki dikkat",     "breathlessness",    "chest"),
+        ("saans ki takleef",    "breathlessness",    "chest"),
+        ("saans mein dikkat",   "breathlessness",    "chest"),
+        ("difficulty breathing","breathlessness",    "chest"),
+        ("shortness of breath", "breathlessness",    "chest"),
+        # Head
+        ("headache",            "headache",          "head"),
+        ("sar dard",            "sar dard",          "head"),
+        ("sir dard",            "sar dard",          "head"),
+        # Fever
+        ("bukhar",              "bukhar",            None),
+        ("fever",               "fever",             None),
+        # Stomach
+        ("pet dard",            "pet dard",          "pet"),
+        ("stomach pain",        "stomach pain",      "stomach"),
+        ("abdominal pain",      "abdominal pain",    "stomach"),
+        # Knee / Back
+        ("knee pain",           "knee pain",         "ghutna"),
+        ("ghutne mein dard",    "knee pain",         "ghutna"),
+        ("back pain",           "back pain",         "kamar"),
+        ("kamar dard",          "kamar dard",        "kamar"),
+        # Vomiting / Dizziness
+        ("vomiting",            "vomiting",          None),
+        ("ulti",                "vomiting",          None),
+        ("dizziness",           "dizziness",         None),
+        ("chakkar",             "chakkar",           None),
+        # Weakness
+        ("weakness",            "weakness",          None),
+        ("kamzori",             "kamzori",           None),
+        # Cough
+        ("khansi",              "khansi",            None),
+        ("cough",               "cough",             None),
+        # Eyes / Ears
+        ("eye pain",            "eye pain",          "eye"),
+        ("aankh dard",          "eye pain",          "eye"),
+        ("ear pain",            "ear pain",          "ear"),
+        ("kaan dard",           "ear pain",          "ear"),
+        # Joints
+        ("joint pain",          "joint pain",        None),
+        ("jodon mein dard",     "joint pain",        None),
+        # Skin
+        ("skin rash",           "skin rash",         "skin"),
+        ("rash",                "skin rash",         "skin"),
+        ("itching",             "itching",           "skin"),
+        ("khujli",              "khujli",            "skin"),
+        # Urine
+        ("burning urination",   "burning urination", "urinary"),
+        ("peshaab mein jalan",  "burning urination", "urinary"),
+        ("blood in urine",      "blood in urine",    "urinary"),
+        # Mental health
+        ("anxiety",             "anxiety",           None),
+        ("depression",          "depression",        None),
+        # Chronic conditions
+        ("diabetes",            "diabetes",          None),
+        ("sugar",               "diabetes",          None),
+        ("thyroid",             "thyroid",           None),
+        # Pain generic
+        ("pain",                "pain",              None),
+        ("dard",                "dard",              None),
+        ("takleef",             "takleef",           None),
     ]
 
     def _rescue(text: str, features: dict) -> dict:
@@ -271,10 +314,16 @@ def parse_extractor_response(raw_response: str, raw_input: str = "") -> dict:
         return features
 
     cleaned = raw_response.strip()
-    cleaned = re.sub(r"^```json\s*", "", cleaned)
+    cleaned = re.sub(r"^```json\s*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"^```\s*", "", cleaned)
     cleaned = re.sub(r"\s*```$", "", cleaned)
     cleaned = cleaned.strip()
+
+    # ── FIX: Extract JSON object even if there is surrounding text ──
+    json_match = re.search(r'\{.*\}', cleaned, re.DOTALL)
+    if json_match:
+        cleaned = json_match.group(0)
+
     try:
         features = json.loads(cleaned)
         features.setdefault("primary_complaint", None)
@@ -319,5 +368,7 @@ if __name__ == "__main__":
     print(f"EXTRACTOR tokens: ~{len(EXTRACTOR_SYSTEM_PROMPT)//4}")
     r = parse_extractor_response('{"primary_complaint":"bukhar","associated_symptoms":[],"negations":[],"severity_hint":"mild","onset":null,"duration":"2 din se","age":28,"gender":"male","body_part":null,"context_flags":{"is_follow_up_visit":false,"post_surgery":false,"post_accident":false,"is_for_child":false,"is_for_elderly":false,"is_pregnancy_related":false,"is_chronic_condition":false,"needs_doctor_name":false,"is_browse_request":false,"is_emergency_self_declared":false}}')
     print(f"Parse OK: {r['primary_complaint']}, age={r['age']}")
-    r2 = parse_extractor_response("sorry cannot help")
-    print(f"Fallback OK: primary={r2['primary_complaint']}")
+    r2 = parse_extractor_response("sorry cannot help", raw_input="varicose vein problem")
+    print(f"Rescue test: primary={r2['primary_complaint']} (should be 'varicose veins')")
+    r3 = parse_extractor_response("sorry cannot help", raw_input="legs mein pain aur swelling hai")
+    print(f"Rescue test 2: primary={r3['primary_complaint']} (should be 'leg pain')")
