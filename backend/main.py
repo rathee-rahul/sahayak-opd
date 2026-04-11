@@ -19,6 +19,7 @@ from fastapi import FastAPI, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from typing import Optional
 from dotenv import load_dotenv
 import asyncio, os, sys, json, re, requests
 from datetime import datetime
@@ -155,20 +156,17 @@ _HINDI_DEPT_KEYWORDS = {
 }
 
 # ── HINGLISH / ENGLISH CONCEPT KEYWORDS ─────────────────────
-# For words that don't fuzzy-match dept names even after transliteration
-# e.g. "sugar" → "Endocrinology", "kidney" → "Nephrology"
 _CONCEPT_KEYWORDS = {
-    # body parts / common names → dept
     "kidney":    "Nephrology",
-    "kidni":     "Nephrology",          # transliterated किडनी
+    "kidni":     "Nephrology",
     "sugar":     "Endocrinology (Diabetes & Hormones)",
     "diabetes":  "Endocrinology (Diabetes & Hormones)",
     "thyroid":   "Endocrinology (Diabetes & Hormones)",
-    "ankha":     "Ophthalmology (Eyes)",  # transliterated आंख
+    "ankha":     "Ophthalmology (Eyes)",
     "aankh":     "Ophthalmology (Eyes)",
     "eye":       "Ophthalmology (Eyes)",
     "eyes":      "Ophthalmology (Eyes)",
-    "haddi":     "Orthopaedics (Bones & Joints)",  # transliterated हड्डी
+    "haddi":     "Orthopaedics (Bones & Joints)",
     "hddi":      "Orthopaedics (Bones & Joints)",
     "bone":      "Orthopaedics (Bones & Joints)",
     "bones":     "Orthopaedics (Bones & Joints)",
@@ -181,35 +179,34 @@ _CONCEPT_KEYWORDS = {
     "blood":     "Haematology (Blood Disorders)",
     "khoon":     "Haematology (Blood Disorders)",
     "skin":      "Dermatology & Venereology (Skin)",
-    "tvcha":     "Dermatology & Venereology (Skin)",  # transliterated त्वचा
-    "bachon":    "Paediatrics Medicine (Children)",   # transliterated बच्चों
+    "tvcha":     "Dermatology & Venereology (Skin)",
+    "bachon":    "Paediatrics Medicine (Children)",
     "bacho":     "Paediatrics Medicine (Children)",
     "children":  "Paediatrics Medicine (Children)",
     "child":     "Paediatrics Medicine (Children)",
     "pet":       "Gastroenterology (Stomach & Digestion)",
     "stomach":   "Gastroenterology (Stomach & Digestion)",
     "lungs":     "Pulmonary Medicine",
-    "sans":      "Pulmonary Medicine",               # saans = breathing
+    "sans":      "Pulmonary Medicine",
     "mental":    "Psychiatry (Mental Health)",
-    "mansik":    "Psychiatry (Mental Health)",       # transliterated मानसिक
+    "mansik":    "Psychiatry (Mental Health)",
     "teeth":     "Dental Surgery",
-    "dant":      "Dental Surgery",                   # transliterated दांत
+    "dant":      "Dental Surgery",
     "elderly":   "Geriatric Medicine (Elderly Care)",
-    "bujurg":    "Geriatric Medicine (Elderly Care)", # transliterated बुजुर्ग
+    "bujurg":    "Geriatric Medicine (Elderly Care)",
     "rehab":     "Physical Medicine & Rehabilitation",
     "ear":       "Otorhinolaryngology - ENT",
     "nose":      "Otorhinolaryngology - ENT",
     "throat":    "Otorhinolaryngology - ENT",
-    "kan":       "Otorhinolaryngology - ENT",        # transliterated कान
-    "nak":       "Otorhinolaryngology - ENT",        # transliterated नाक
-    "gala":      "Otorhinolaryngology - ENT",        # transliterated गला
-    "ent":       "Otorhinolaryngology - ENT",   # whole-word only (see extract_browse_dept)
-    "nyuro":        "Neurology (Brain & Nerves)",        # transliterated न्यूरो
+    "kan":       "Otorhinolaryngology - ENT",
+    "nak":       "Otorhinolaryngology - ENT",
+    "gala":      "Otorhinolaryngology - ENT",
+    "ent":       "Otorhinolaryngology - ENT",
+    "nyuro":        "Neurology (Brain & Nerves)",
     "nyurolaji":    "Neurology (Brain & Nerves)",
     "neurology":    "Neurology (Brain & Nerves)",
-    # Neurosurgery must come BEFORE "neuro" so substring match hits it first
     "neurosurgery": "Neurosurgery (Brain Surgery)",
-    "neuro surgery": "Neurosurgery (Brain Surgery)",  # with space
+    "neuro surgery": "Neurosurgery (Brain Surgery)",
     "neuro surgeon": "Neurosurgery (Brain Surgery)",
     "brain surgeon": "Neurosurgery (Brain Surgery)",
     "brain surgery":"Neurosurgery (Brain Surgery)",
@@ -218,24 +215,14 @@ _CONCEPT_KEYWORDS = {
     "spine surgery":"Neurosurgery (Brain Surgery)",
     "spinal surgery":"Neurosurgery (Brain Surgery)",
     "head injury":  "Neurosurgery (Brain Surgery)",
-    "nyurosarjari": "Neurosurgery (Brain Surgery)",  # Hindi transliteration
-    "neuro":        "Neurology (Brain & Nerves)",    # generic — after neurosurgery
+    "nyurosarjari": "Neurosurgery (Brain Surgery)",
+    "neuro":        "Neurology (Brain & Nerves)",
 }
 
 # ── BROWSE DEPARTMENT EXTRACTOR ───────────────────────────────
 def extract_browse_dept(message: str) -> str | None:
-    """
-    Extract department from browse query. Three-step approach:
-    1. Exact/fuzzy match against dept names — explicit dept names ALWAYS win
-    2. Concept keyword match — handles Hindi/transliterated words like "kidney", "bachon"
-    3. Lower-threshold fuzzy fallback
-    Note: message is already transliterated to Roman by the time it reaches here.
-    """
     msg_lower = message.lower()
 
-    # Step 1 — Fuzzy match against English department names FIRST
-    # This ensures explicit dept names (e.g. "Cardiothoracic & Vascular Surgery")
-    # are matched before concept keywords like "heart" can intercept.
     best_dept  = None
     best_score = 0
 
@@ -253,32 +240,24 @@ def extract_browse_dept(message: str) -> str | None:
             best_score = score
             best_dept  = dept
 
-    # High-confidence fuzzy match → return immediately, skip concept keywords
     if best_score >= 75:
         print(f"[Browse] Fuzzy match: '{best_dept}' score={best_score}")
         return best_dept
 
-    # Step 2 — Concept keyword match (for Hindi/transliterated words)
-    # Short keywords (<=4 chars e.g. "ent", "pet", "dil") → whole word match only
-    # Longer keywords → substring match is fine
-    # IMPORTANT: dict is ordered — neurosurgery entries come before "neuro"
     words = set(re.split(r'[\s,?।]+', msg_lower))
     for keyword, dept in _CONCEPT_KEYWORDS.items():
         if keyword.startswith("#"):
             continue
-        # Multi-word keywords (e.g. "neuro surgery") — always substring match
         if " " in keyword:
             matched = keyword in msg_lower
         else:
             matched = keyword in words if len(keyword) <= 4 else keyword in msg_lower
         if matched:
-            # Guard: don't let "neuro" match when message clearly says "neurosurgery"
             if keyword == "neuro" and "surgery" in msg_lower:
                 continue
             print(f"[Browse] Concept keyword: '{keyword}' → '{dept}'")
             return dept
 
-    # Step 3 — Lower-threshold fuzzy fallback
     print(f"[Browse] msg='{msg_lower[:50]}' best='{best_dept}' score={best_score}")
     return best_dept if best_score >= 60 else None
 
@@ -294,11 +273,8 @@ TODAY_VARIANTS = {
 }
 
 def get_today_name() -> str:
-    """Return current day name — computed per-call so it never goes stale."""
     return datetime.now().strftime("%A")
 
-# Module-level alias kept only for endpoints that need it at import time.
-# All request handlers must call get_today_name() directly.
 TODAY_NAME = get_today_name()
 
 def is_available_today(opd_days: str) -> bool:
@@ -336,11 +312,6 @@ def search_by_condition(query: str, preferred_dept: str = None) -> list:
     return results
 
 
-# ── Hindi → Roman transliteration ────────────────────────────────────────────
-# Converts Devanagari voice transcriptions to approximate English phonetics
-# so fuzzy matching works against English doctor names in the database.
-# e.g. "शर्मा" → "shrma" which fuzzy-matches "sharma" at 80%
-
 _CONSONANTS = {
     'क':'k','ख':'kh','ग':'g','घ':'gh','ङ':'ng',
     'च':'ch','छ':'chh','ज':'j','झ':'jh','ञ':'n',
@@ -364,13 +335,8 @@ _VIRAMA = '्'
 
 
 def transliterate_hindi(text: str) -> str:
-    """
-    Devanagari → approximate Roman phonetics for fuzzy name matching.
-    Not perfect but scores 65-100% fuzzy match against real English spellings.
-    Returns original text unchanged if it contains no Devanagari characters.
-    """
     if not any('\u0900' <= ch <= '\u097F' for ch in text):
-        return text  # already Roman/English — skip
+        return text
 
     out = []
     chars = list(text)
@@ -383,13 +349,13 @@ def transliterate_hindi(text: str) -> str:
         elif ch in _CONSONANTS:
             roman = _CONSONANTS[ch]; i += 1
             if i < n and chars[i] == _VIRAMA:
-                out.append(roman); i += 1          # virama: no inherent 'a'
+                out.append(roman); i += 1
             elif i < n and chars[i] in _MATRAS:
                 out.append(roman + _MATRAS[chars[i]]); i += 1
             elif i < n and chars[i] in _CONSONANTS:
-                out.append(roman)                   # consonant cluster: no 'a'
+                out.append(roman)
             else:
-                out.append(roman + 'a')             # inherent 'a'
+                out.append(roman + 'a')
         elif ch in _MATRAS:
             out.append(_MATRAS[ch]); i += 1
         elif ch == _VIRAMA:
@@ -399,27 +365,25 @@ def transliterate_hindi(text: str) -> str:
         elif ord(ch) < 128:
             out.append(ch.lower()); i += 1
         else:
-            i += 1  # skip unknown unicode
+            i += 1
 
     import re as _re
     return _re.sub(r'\s+', ' ', ''.join(out)).strip().lower()
 
 
 def search_doctor_by_name(query: str, hint_dept: str = None):
-    # Input is already transliterated to Roman upstream (sanitize step)
     query_lower = query.strip().lower()
 
     results = []
     for dept, doctors in DOCTOR_DATA.items():
         for doc in doctors:
             doc_name_lower = doc["name"].lower()
-            # Remove "Dr." / "Prof." prefix for cleaner matching
             doc_name_clean = re.sub(r'^(dr\.?|prof\.?)\s*', '', doc_name_lower).strip()
             similarity = max(
                 fuzz.partial_ratio(query_lower, doc_name_lower),
                 fuzz.partial_ratio(query_lower, doc_name_clean),
             )
-            if similarity >= 65:  # lowered from 75 — transliteration is approx
+            if similarity >= 65:
                 score = similarity + (10 if hint_dept and dept == hint_dept else 0)
                 results.append({"dept": dept, "doctor": doc, "score": score})
     results.sort(key=lambda x: -x["score"])
@@ -447,7 +411,6 @@ def filter_by_sub_specialty(doctors: list, sub_specialty: str) -> list:
 
 
 def _sort_jpnatc_last(doctors: list) -> list:
-    """Push JPNATC doctors to end — preserved from v1."""
     non_jpnatc = [d for d in doctors if (d.get("center", "") or "").upper() != "JPNATC"]
     jpnatc     = [d for d in doctors if (d.get("center", "") or "").upper() == "JPNATC"]
     return non_jpnatc + jpnatc
@@ -458,18 +421,9 @@ def _sort_jpnatc_last(doctors: list) -> list:
 # ══════════════════════════════════════════════════════════════
 
 def call_gemini(system_prompt: str, messages: list, max_tokens: int = 512, label: str = "") -> str:
-    """
-    Call Gemini 2.0 Flash via REST API.
-    Gemini uses a different format than OpenAI-compatible APIs:
-      - system prompt goes as first "user" turn with role "user" + model "model" ack
-      - contents array instead of messages array
-      - response in candidates[0].content.parts[0].text
-    Returns raw JSON string or raises on failure.
-    """
     if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY not set")
 
-    # Build contents array — system prompt first, then conversation
     contents = [
         {"role": "user",  "parts": [{"text": system_prompt}]},
         {"role": "model", "parts": [{"text": "Understood. I will respond only in valid JSON."}]},
@@ -483,7 +437,7 @@ def call_gemini(system_prompt: str, messages: list, max_tokens: int = 512, label
         "generationConfig": {
             "temperature": 0.2,
             "maxOutputTokens": max_tokens,
-            "responseMimeType": "application/json",  # force JSON output
+            "responseMimeType": "application/json",
         }
     }
 
@@ -504,17 +458,11 @@ def call_gemini(system_prompt: str, messages: list, max_tokens: int = 512, label
 
 
 def call_llm(system_prompt: str, messages: list, max_tokens: int = 512, label: str = "") -> str:
-    """
-    LLM cascade: Gemini 2.0 Flash → Groq 70B → Cerebras 8B
-    Returns raw JSON string. Empty string if all fail.
-    """
-    # ── Primary: Gemini 2.0 Flash ─────────────────────────────
     try:
         return call_gemini(system_prompt, messages, max_tokens, label)
     except Exception as e:
         print(f"[LLM:{label}] Gemini failed: {e} → Groq")
 
-    # ── Fallback 1: Groq 70B ──────────────────────────────────
     try:
         response = groq_client.chat.completions.create(
             model="llama-3.3-70b-versatile",
@@ -528,7 +476,6 @@ def call_llm(system_prompt: str, messages: list, max_tokens: int = 512, label: s
     except Exception as e:
         print(f"[LLM:{label}] Groq failed: {e} → Cerebras")
 
-    # ── Fallback 2: Cerebras 8B ───────────────────────────────
     try:
         response = cerebras_client.chat.completions.create(
             model="llama3.1-8b",
@@ -548,7 +495,6 @@ def call_llm(system_prompt: str, messages: list, max_tokens: int = 512, label: s
 async def call_llm_async(
     system_prompt: str, messages: list, max_tokens: int = 512, label: str = ""
 ) -> str:
-    """Async wrapper — runs LLM call in thread pool."""
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
         None, call_llm, system_prompt, messages, max_tokens, label
@@ -556,7 +502,7 @@ async def call_llm_async(
 
 
 # ══════════════════════════════════════════════════════════════
-# REQUEST MODEL
+# REQUEST MODEL  ← THE FIX IS HERE
 # ══════════════════════════════════════════════════════════════
 
 class ChatRequest(BaseModel):
@@ -566,9 +512,9 @@ class ChatRequest(BaseModel):
     denied_symptoms:    list = []
     follow_up_count:    int  = 0
     session_id:         str  = ""
-    active_intent:      str  = ""   # "doctor_schedule" | "browse_department" | ""
-    age:                int  = None   # pre-filled from age/gender chip row
-    gender:             str  = None   # "male" | "female" | None
+    active_intent:      str  = ""
+    age:                Optional[int] = None   # ← FIXED: accepts null from frontend
+    gender:             Optional[str] = None   # ← FIXED: accepts null from frontend
 
 
 # ══════════════════════════════════════════════════════════════
@@ -576,23 +522,11 @@ class ChatRequest(BaseModel):
 # ══════════════════════════════════════════════════════════════
 
 def fetch_doctors_for_dept(department: str, raw_message: str, features: dict = None) -> list:
-    """
-    Fetch and sort doctors for a department.
-    Priority order:
-      1. Sub-specialty match + available today (e.g. Paediatric Pulmonology for child with cough)
-      2. Condition match + available today
-      3. Sub-specialty match + not today
-      4. Condition match + not today
-      5. All other dept doctors
-      6. JPNATC always last
-    """
     if not department or department == "Casualty / Emergency":
         return []
 
     def _is_jpnatc(d): return (d.get("center", "") or "").upper() == "JPNATC"
 
-    # ── Build sub-specialty keywords from features ──────────────────────────
-    # e.g. if patient is 13yo with cough → boost "paediatric pulmonology" doctors
     sub_spec_keywords = []
     if features:
         primary   = (features.get("primary_complaint") or "").lower()
@@ -600,7 +534,6 @@ def fetch_doctors_for_dept(department: str, raw_message: str, features: dict = N
         associated = [s.lower() for s in (features.get("associated_symptoms") or [])]
         all_symptoms = primary + " " + " ".join(associated)
 
-        # Child + respiratory → Paediatric Pulmonology
         if age and int(age) <= 14:
             if any(w in all_symptoms for w in ["cough", "khansi", "breath", "saans", "asthma", "wheeze", "tb"]):
                 sub_spec_keywords.append("pulmonol")
@@ -627,11 +560,9 @@ def fetch_doctors_for_dept(department: str, raw_message: str, features: dict = N
     if dept_matches:
         matched = [{**m["doctor"], "_dept": m["dept"]} for m in dept_matches[:15]]
     else:
-        # Fallback: use all dept doctors
         all_docs = DOCTOR_DATA.get(department, [])
         matched = [{**d, "_dept": department} for d in all_docs]
 
-    # Sort into priority buckets
     sub_today   = [d for d in matched if _matches_sub_spec(d) and is_available_today(d.get("opd_days","")) and not _is_jpnatc(d)]
     sub_other   = [d for d in matched if _matches_sub_spec(d) and not is_available_today(d.get("opd_days","")) and not _is_jpnatc(d)]
     rest_today  = [d for d in matched if not _matches_sub_spec(d) and is_available_today(d.get("opd_days","")) and not _is_jpnatc(d)]
@@ -640,7 +571,6 @@ def fetch_doctors_for_dept(department: str, raw_message: str, features: dict = N
 
     result = sub_today + sub_other + rest_today + rest_other + jpnatc
 
-    # Deduplicate by name (keep first occurrence = highest priority)
     seen = set()
     deduped = []
     for d in result:
@@ -669,21 +599,15 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     prefilled_age      = request.age
     prefilled_gender   = request.gender
 
-    # ── STEP 1: PII Scrub ─────────────────────────────────────
     sanitized = sanitize_input(raw_message)
     if was_sanitized(raw_message, sanitized):
         print("[PII] Input scrubbed")
 
-    # Transliterate Devanagari → Roman so ALL downstream processing
-    # (keyword_scan, dept extract, doctor search, LLM prompts) works
-    # whether user typed Hindi or spoke via voice.
-    # e.g. "कार्डियोलॉजी के डॉक्टर" → "cardiyoloji ke doctor"
     original_for_log = sanitized
     sanitized = transliterate_hindi(sanitized)
     if sanitized != original_for_log:
         print(f"[Transliterate] '{original_for_log[:50]}' → '{sanitized[:50]}'")
 
-    # ── STEP 2: Parallel — keyword_scan + LLM 1 ──────────────
     extractor_messages = build_extractor_messages(sanitized, history)
 
     raw_flags_task = asyncio.get_event_loop().run_in_executor(
@@ -701,9 +625,6 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     raw_flags = raw_flags_result
     features  = parse_extractor_response(llm1_raw, raw_input=sanitized)
 
-    # ── LLM1 RESCUE: if primary_complaint is None but keyword_scan caught flags,
-    # synthesize a primary_complaint from the strongest flag so engine can score it.
-    # This covers bare inputs like "chest pain", "bukhar", "headache".
     if not features.get("primary_complaint") and raw_flags:
         _FLAG_TO_COMPLAINT = {
             "chest_pain":      "chest pain",
@@ -723,7 +644,6 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
                 print(f"[LLM1 Rescue] primary set from flag: {complaint}")
                 break
 
-    # Merge prefilled age/gender from chip row if LLM1 didn't extract them
     if prefilled_age and not features.get("age"):
         features["age"] = prefilled_age
     if prefilled_gender and not features.get("gender"):
@@ -732,7 +652,6 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     print(f"[Engine] primary={features.get('primary_complaint')} "
           f"flags={[k for k, v in raw_flags.items() if v]}")
 
-    # ── STEP 3 + 4: Engine ───────────────────────────────────
     engine_output = run_engine(features, raw_flags)
 
     print(f"[Engine] advisory={engine_output['show_advisory']} "
@@ -741,7 +660,6 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
           f"top3={[d['dept'].split('(')[0].strip() for d in engine_output['top3']]} "
           f"gap={engine_output['confidence_gap']}%")
 
-    # ── STEP 5: LLM 2 — clinical routing ─────────────────────
     clinical_messages = build_clinical_messages(
         features           = features,
         engine_output      = engine_output,
@@ -766,7 +684,6 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
           f"python_correct={clinical.get('python_correct')} "
           f"follow_up={clinical.get('follow_up_needed')}")
 
-    # ── STEP 6: Doctor fetch ──────────────────────────────────
     final_dept       = clinical.get("final_dept")
     show_advisory    = engine_output["show_advisory"]
     is_selfcare      = engine_output["is_selfcare"]
@@ -779,16 +696,11 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     needs_doctor  = context_flags.get("needs_doctor_name", False)
     is_browse     = context_flags.get("is_browse_request", False)
 
-    # ── ACTIVE INTENT OVERRIDE ────────────────────────────────
-    # Frontend sends active_intent when user is in Tile 2 (doctor search) mode.
-    # This catches cases where extractor LLM misses needs_doctor_name=true
-    # (e.g. user types just a name without "Dr." prefix).
     if active_intent == "doctor_schedule":
         needs_doctor = True
     elif active_intent == "browse_department":
         is_browse = True
 
-    # ── BROWSE OVERRIDE ──────────────────────────────────────
     if is_browse:
         python_browse_dept = extract_browse_dept(sanitized)
         if python_browse_dept:
@@ -803,21 +715,15 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     if needs_doctor:
         text_lower = sanitized.lower()
 
-        # ── NAME EXTRACTION ───────────────────────────────────
-        # Handles English: "Dr. Sharma", "Dr Anita Dhar ka schedule"
-        # Handles Hindi:   "डॉक्टर कमल कटारिया की ओपीडी", "डॉ संजय वाधवा"
         name_match = (
-            # English Dr. prefix
             re.search(
                 r'\bdr\.?\s+([a-z][a-z\s]{1,30}?)(?:\s+ka|\s+ke|\s+ki|\s+kab|\s+ka\s|,|\?|$)',
                 text_lower
             ) or
-            # English "doctor" prefix (without Dr.)
             re.search(
                 r'\bdoctor\s+([a-z][a-z\s]{1,30}?)(?:\s+ka|\s+ke|\s+ki|\s+kab|\s+opd|\s+ka\s|,|\?|$)',
                 text_lower
             ) or
-            # Hindi डॉक्टर prefix — capture words after it, stop at ki/ka/ke/kab
             re.search(
                 r'(?:डॉक्टर|डॉ\.?)\s+([\u0900-\u097F\s]{2,40}?)(?:\s+की|\s+का|\s+के|\s+कब|$)',
                 sanitized
@@ -827,7 +733,6 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
         if name_match:
             doctor_query = name_match.group(1).strip()
         else:
-            # Last resort: strip common filler words and use what's left
             filler = re.compile(
                 r'(mujhe|batao|bataiye|bataen|dikhao|ka schedule|ki opd|ke bare mein|'
                 r'opd kab|kab lagti|schedule kya|search karo|dhundho|find karo|'
@@ -835,7 +740,6 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
                 re.IGNORECASE
             )
             doctor_query = filler.sub("", sanitized).strip(" ?।,")
-            # If still too long (>40 chars) it's probably not a name — use sanitized as-is
             if len(doctor_query) > 40:
                 doctor_query = sanitized
 
@@ -848,7 +752,6 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
             unique_names   = set(m["doctor"]["name"] for m in matches)
             ambiguous      = len(unique_names) > 1 and len(doctor_query.split()) <= 1
         else:
-            # Doctor not found — show clean name in error, not full sentence
             display_name = doctor_query.title() if len(doctor_query) <= 40 else "Yeh"
             clinical["reply"] = (
                 f"\"{display_name}\" naam ke doctor AIIMS OPD database mein nahi mile. "
@@ -864,7 +767,6 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
         others_main  = [d for d in tagged_docs if not is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
         jpnatc_docs  = [d for d in tagged_docs if _is_jpnatc(d)]
         dept_doctors = todays_main + others_main + jpnatc_docs
-        # Override LLM reply for browse — suppress follow-up question
         clinical["reply"] = f"{final_dept} ke doctors neeche dekh sakte hain."
         clinical["follow_up_needed"] = False
         clinical["follow_up_question"] = None
@@ -875,7 +777,6 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
     elif final_dept:
         dept_doctors = fetch_doctors_for_dept(final_dept, sanitized, features=features)
 
-    # ── STEP 7: Async ambiguity log (BackgroundTasks — safe fire-and-forget) ──
     background_tasks.add_task(
         log_if_ambiguous,
         sanitized_input    = sanitized,
@@ -888,7 +789,6 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
         session_id         = session_id or None,
     )
 
-    # ── RESPONSE ──────────────────────────────────────────────
     new_follow_up_count = follow_up_count + (1 if clinical.get("follow_up_needed") else 0)
     today = get_today_name()
 
