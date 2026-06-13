@@ -226,7 +226,7 @@ def extract_browse_dept(message: str) -> str | None:
 
     # Department picker messages include the exact department name. Prefer that
     # before fuzzy matching so "Dental Surgery" is not reduced to "Surgery".
-    for dept in sorted(DEPARTMENTS, key=len, reverse=True):
+    for dept in sorted(DEPARTMENTS, key=lambda d: len(d.split("(")[0].strip()), reverse=True):
         short_name = dept.split("(")[0].strip().lower()
         full_name = dept.lower()
         if full_name in msg_lower or short_name in msg_lower:
@@ -461,6 +461,178 @@ def filter_by_sub_specialty(doctors: list, sub_specialty: str) -> list:
     ]
 
 
+def _base_chat_response(
+    *,
+    reply: str = "",
+    department: str = None,
+    doctors: list = None,
+    doctor_results: list = None,
+    doctor_query: str = None,
+    ambiguous: bool = False,
+    intent: str = "general",
+    show_advisory: bool = False,
+    debug: dict = None,
+) -> dict:
+    return {
+        "reply": reply,
+        "disclaimer": "Yeh preliminary suggestion hai. OPD mein doctor properly assess karenge.",
+        "department": department,
+        "severity": "routine",
+        "action_advice": None,
+        "reason": None,
+        "follow_up_needed": False,
+        "follow_up_question": None,
+        "follow_up_count": 0,
+        "show_advisory": show_advisory,
+        "is_selfcare": False,
+        "referral_required": department in REFERRAL_REQUIRED_DEPTS if department else False,
+        "doctors": doctors or [],
+        "doctor_results": doctor_results or [],
+        "doctor_query": doctor_query,
+        "ambiguous": ambiguous,
+        "debug": debug or {},
+        "today": get_today_name(),
+        "intent": intent,
+    }
+
+
+def _extract_doctor_query(message: str) -> str:
+    text = (message or "").strip()
+    text_lower = text.lower()
+
+    name_match = (
+        re.search(
+            r'\b(?:dr\.?|doctor|prof\.?)\s+([a-z][a-z\s.]{1,40}?)(?:\s+ka|\s+ke|\s+ki|\s+kab|\s+opd|,|\?|$)',
+            text_lower
+        ) or
+        re.search(
+            r'(?:डॉक्टर|डॉ\.?)\s+([\u0900-\u097F\s]{2,40}?)(?:\s+की|\s+का|\s+के|\s+कब|,|\?|$)',
+            text
+        )
+    )
+    if name_match:
+        return name_match.group(1).strip(" .?,")
+
+    filler = re.compile(
+        r'(mujhe|batao|bataiye|bataen|dikhao|ka schedule|ki opd|ke bare mein|'
+        r'opd kab|kab lagti|schedule kya|search karo|dhundho|find karo|'
+        r'की ओपीडी|के बारे में|का शेड्यूल|ओपीडी कब|कब लगती)',
+        re.IGNORECASE
+    )
+    cleaned = filler.sub("", text).strip(" ?।,")
+    if "," in cleaned:
+        cleaned = cleaned.split(",", 1)[0].strip()
+    return cleaned if len(cleaned) <= 40 else text
+
+
+def _tag_dept_doctors(department: str) -> list:
+    all_docs = DOCTOR_DATA.get(department, [])
+
+    def _is_jpnatc(d):
+        return (d.get("center", "") or "").upper() == "JPNATC"
+
+    tagged_docs = [{**d, "_dept": department} for d in all_docs]
+    todays_main = [d for d in tagged_docs if is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
+    others_main = [d for d in tagged_docs if not is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
+    jpnatc_docs = [d for d in tagged_docs if _is_jpnatc(d)]
+    return todays_main + others_main + jpnatc_docs
+
+
+def _is_doctor_search_request(message: str, active_intent: str) -> bool:
+    text = (message or "").strip().lower()
+    return active_intent == "doctor_schedule" or bool(re.match(r'^(dr\.?|doctor|prof\.?)\s+', text))
+
+
+def _is_today_request(message: str) -> bool:
+    text = (message or "").lower()
+    return bool(re.search(r"\b(today|today's|aaj|आज)\b", text)) and bool(
+        re.search(r"\b(doctor|doctors|opd|list|kaun|dikhao|hain|हैं|डॉक्टर)\b", text)
+    )
+
+
+def _is_browse_request(message: str, active_intent: str) -> bool:
+    text = (message or "").lower()
+    if active_intent == "browse_department":
+        return True
+    return bool(re.search(
+        r"\b(doctors?|doctor list|opd list|department|dept|kaun|dikhao|list|schedule|mein kaun|ke doctors|ki list)\b",
+        text
+    ))
+
+
+def _is_emergency_info_request(message: str) -> bool:
+    text = (message or "").lower()
+    return bool(re.search(r"\b(emergency|helpline|casualty|ambulance|102|112)\b", text))
+
+
+def try_fast_path_chat(sanitized: str, active_intent: str) -> dict | None:
+    if _is_emergency_info_request(sanitized):
+        print("[FastPath] emergency_info")
+        return _base_chat_response(
+            reply=(
+                "AIIMS Emergency/Casualty 24x7 available hai. "
+                "Emergency mein Casualty Block jaayein ya ambulance ke liye 102 / 112 call karein."
+            ),
+            department="Casualty / Emergency",
+            intent="emergency",
+            show_advisory=True,
+            debug={"fast_path": "emergency_info"},
+        )
+
+    if _is_doctor_search_request(sanitized, active_intent):
+        doctor_query = _extract_doctor_query(sanitized)
+        hint_dept = extract_browse_dept(sanitized) if "," in sanitized else None
+        print(f"[FastPath] doctor_search query='{doctor_query}' hint='{hint_dept}'")
+        if not doctor_query:
+            return _base_chat_response(
+                reply='Kripya doctor ka naam likhein - jaise "Dr. Anita Dhar" ya "Dr. Sharma".',
+                doctor_query=doctor_query,
+                intent="doctor_schedule",
+                debug={"fast_path": "doctor_search", "reason": "empty_query"},
+            )
+
+        matches = search_doctor_by_name(doctor_query, hint_dept=hint_dept)
+        doctor_results = [{"dept": m["dept"], "doctor": m["doctor"]} for m in matches]
+        unique_names = set(m["doctor"]["name"] for m in matches)
+        ambiguous = len(unique_names) > 1 and len(doctor_query.split()) <= 1
+        reply = "" if matches else f'"{doctor_query.title()}" naam ke doctor AIIMS OPD database mein nahi mile.'
+        return _base_chat_response(
+            reply=reply,
+            doctor_results=doctor_results,
+            doctor_query=doctor_query,
+            ambiguous=ambiguous,
+            intent="doctor_schedule",
+            debug={"fast_path": "doctor_search", "match_count": len(matches)},
+        )
+
+    if _is_today_request(sanitized):
+        department = extract_browse_dept(sanitized)
+        doctors = get_todays_doctors(department)
+        print(f"[FastPath] todays_doctors department='{department}' count={len(doctors)}")
+        return _base_chat_response(
+            reply=f"Aaj ke doctors neeche dekh sakte hain." if doctors else "Aaj ke liye doctors nahi mile.",
+            department=department,
+            doctors=[{**r["doctor"], "_dept": r["dept"]} for r in doctors],
+            intent="browse_department",
+            debug={"fast_path": "todays_doctors", "department": department, "count": len(doctors)},
+        )
+
+    if _is_browse_request(sanitized, active_intent):
+        department = extract_browse_dept(sanitized)
+        if department and department != "Casualty / Emergency":
+            doctors = _tag_dept_doctors(department)
+            print(f"[FastPath] browse_department department='{department}' count={len(doctors)}")
+            return _base_chat_response(
+                reply=f"{department} ke doctors neeche dekh sakte hain.",
+                department=department,
+                doctors=doctors,
+                intent="browse_department",
+                debug={"fast_path": "browse_department", "department": department, "count": len(doctors)},
+            )
+
+    return None
+
+
 def _sort_jpnatc_last(doctors: list) -> list:
     non_jpnatc = [d for d in doctors if (d.get("center", "") or "").upper() != "JPNATC"]
     jpnatc     = [d for d in doctors if (d.get("center", "") or "").upper() == "JPNATC"]
@@ -663,6 +835,10 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
         print(f"[Transliterate] Skipped — English/Hinglish input: '{sanitized[:50]}'")
 
     print(f"[Input] raw='{raw_message[:60]}' sanitized='{sanitized[:60]}'")
+
+    fast_path_response = try_fast_path_chat(sanitized, active_intent)
+    if fast_path_response is not None:
+        return fast_path_response
 
     extractor_messages = build_extractor_messages(sanitized, history)
 
