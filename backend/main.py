@@ -465,6 +465,124 @@ def _doctor_search_text(doc: dict) -> str:
     ]).lower()
 
 
+_DB_MATCH_STOPWORDS = {
+    "a", "an", "and", "any", "apni", "batao", "bataiye", "case", "doctor", "doctors", "dr",
+    "find", "for", "hai", "hain", "in", "ka", "ke", "ki", "ko", "list", "mein", "mujhe",
+    "opd", "please", "prof", "schedule", "search", "show", "sir", "the", "who",
+}
+
+_DB_MATCH_GENERIC_WORDS = {
+    "clinic", "disease", "doctor", "female", "male", "medicine", "opd", "pain", "problem",
+    "problems", "surgery", "treatment",
+}
+
+_DB_MATCH_RISK_PHRASES = {
+    "chest pain", "severe chest pain", "breathlessness", "heavy bleeding", "unconscious",
+    "stroke", "poisoning", "heart attack", "dizziness", "vomiting", "weakness",
+}
+
+_DB_MATCH_SAFE_SINGLE_ALIASES = {
+    "andrology", "dental", "ent", "infertility", "squint", "varicose", "vertigo",
+}
+
+
+def _normalize_search_text(text: str) -> str:
+    text = (text or "").lower()
+    text = re.sub(r"[^a-z0-9+\s-]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _database_phrase_candidates(message: str) -> list:
+    normalized = _normalize_search_text(message)
+    tokens = [
+        token for token in normalized.split()
+        if token not in _DB_MATCH_STOPWORDS and token not in _DB_MATCH_GENERIC_WORDS
+    ]
+    phrases = []
+
+    for size in range(min(5, len(tokens)), 1, -1):
+        for start in range(0, len(tokens) - size + 1):
+            phrase = " ".join(tokens[start:start + size])
+            if phrase in _DB_MATCH_RISK_PHRASES:
+                continue
+            if any(risk in phrase for risk in _DB_MATCH_RISK_PHRASES):
+                continue
+            phrases.append(phrase)
+
+    for token in tokens:
+        if token in _DB_MATCH_SAFE_SINGLE_ALIASES:
+            phrases.append(token)
+
+    return list(dict.fromkeys(phrases))
+
+
+def _field_text(doc: dict, field: str) -> str:
+    return _normalize_search_text(doc.get(field, "") or "")
+
+
+def _matches_phrase(field_text: str, phrase: str) -> bool:
+    return bool(re.search(rf"(^|\s){re.escape(phrase)}($|\s)", field_text))
+
+
+def search_database_by_service(message: str) -> dict | None:
+    phrases = _database_phrase_candidates(message)
+    if not phrases:
+        return None
+
+    field_weights = {
+        "sub_specialty": 6,
+        "notes": 5,
+        "unit": 3,
+        "conditions": 2,
+    }
+    results = []
+    seen = set()
+
+    for dept, doctors in DOCTOR_DATA.items():
+        for doc in doctors:
+            best = None
+            best_score = 0
+            for field, weight in field_weights.items():
+                field_text = _field_text(doc, field)
+                if not field_text:
+                    continue
+                for phrase in phrases:
+                    if _matches_phrase(field_text, phrase):
+                        score = weight + len(phrase.split())
+                        if score > best_score:
+                            best_score = score
+                            best = phrase
+            if best:
+                key = (dept, doc.get("name", "").lower().strip(), doc.get("opd_days", ""), doc.get("sub_specialty", ""))
+                if key not in seen:
+                    seen.add(key)
+                    results.append({"dept": dept, "doctor": doc, "score": best_score, "phrase": best})
+
+    if not results:
+        return None
+
+    results.sort(key=lambda r: (-r["score"], r["dept"], r["doctor"].get("name", "")))
+    top_score = results[0]["score"]
+    if top_score < 4:
+        return None
+    strong = [r for r in results if r["score"] >= max(4, top_score - 2)]
+    if not strong:
+        return None
+    tagged = [{**r["doctor"], "_dept": r["dept"]} for r in strong[:30]]
+
+    dept_counts = {}
+    for row in strong:
+        dept_counts[row["dept"]] = dept_counts.get(row["dept"], 0) + 1
+    top_dept = max(dept_counts.items(), key=lambda item: item[1])[0]
+
+    return {
+        "department": top_dept if len(dept_counts) == 1 else "Database Match",
+        "doctors": _sort_tagged_doctors(tagged),
+        "label": results[0]["phrase"].title(),
+        "match_count": len(tagged),
+    }
+
+
 def _sort_tagged_doctors(doctors: list) -> list:
     def _is_jpnatc(d):
         return (d.get("center", "") or "").upper() == "JPNATC"
@@ -703,9 +821,9 @@ def _is_emergency_info_request(message: str) -> bool:
     return bool(re.search(r"\b(emergency|helpline|casualty|ambulance|102|112)\b", text))
 
 
-def try_fast_path_chat(sanitized: str, active_intent: str) -> dict | None:
+def try_database_match_chat(sanitized: str, active_intent: str) -> dict | None:
     if _is_emergency_info_request(sanitized):
-        print("[FastPath] emergency_info")
+        print("[FastPath] database_match emergency_info")
         return _base_chat_response(
             reply=(
                 "AIIMS Emergency/Casualty 24x7 available hai. "
@@ -714,7 +832,33 @@ def try_fast_path_chat(sanitized: str, active_intent: str) -> dict | None:
             department="Casualty / Emergency",
             intent="emergency",
             show_advisory=True,
-            debug={"fast_path": "emergency_info"},
+            debug={"fast_path": "database_match", "mode": "emergency_info"},
+        )
+
+    if _is_doctor_search_request(sanitized, active_intent):
+        doctor_query = _extract_doctor_query(sanitized)
+        hint_dept = extract_browse_dept(sanitized) if "," in sanitized else None
+        print(f"[FastPath] database_match doctor_search query='{doctor_query}' hint='{hint_dept}'")
+        if not doctor_query:
+            return _base_chat_response(
+                reply='Kripya doctor ka naam likhein - jaise "Dr. Anita Dhar" ya "Dr. Sharma".',
+                doctor_query=doctor_query,
+                intent="doctor_schedule",
+                debug={"fast_path": "database_match", "mode": "doctor_search", "reason": "empty_query"},
+            )
+
+        matches = search_doctor_by_name(doctor_query, hint_dept=hint_dept)
+        doctor_results = [{"dept": m["dept"], "doctor": m["doctor"]} for m in matches]
+        unique_names = set(m["doctor"]["name"] for m in matches)
+        ambiguous = len(unique_names) > 1 and len(doctor_query.split()) <= 1
+        reply = "" if matches else f'"{doctor_query.title()}" naam ke doctor AIIMS OPD database mein nahi mile.'
+        return _base_chat_response(
+            reply=reply,
+            doctor_results=doctor_results,
+            doctor_query=doctor_query,
+            ambiguous=ambiguous,
+            intent="doctor_schedule",
+            debug={"fast_path": "database_match", "mode": "doctor_search", "match_count": len(matches)},
         )
 
     infertility = _infertility_kind(sanitized)
@@ -730,40 +874,14 @@ def try_fast_path_chat(sanitized: str, active_intent: str) -> dict | None:
             "female": "Obstetrics & Gynaecology",
             "general": "Infertility Clinic",
         }[infertility]
-        print(f"[FastPath] infertility kind='{infertility}' count={len(doctors)}")
+        print(f"[FastPath] database_match infertility kind='{infertility}' count={len(doctors)}")
         return _base_chat_response(
             reply=f"{label} ke doctors neeche dekh sakte hain." if doctors else f"{label} ke doctors abhi database mein nahi mile.",
             department=department,
             doctors=doctors,
             intent="browse_department",
             sub_specialty=label,
-            debug={"fast_path": "infertility", "kind": infertility, "count": len(doctors)},
-        )
-
-    if _is_doctor_search_request(sanitized, active_intent):
-        doctor_query = _extract_doctor_query(sanitized)
-        hint_dept = extract_browse_dept(sanitized) if "," in sanitized else None
-        print(f"[FastPath] doctor_search query='{doctor_query}' hint='{hint_dept}'")
-        if not doctor_query:
-            return _base_chat_response(
-                reply='Kripya doctor ka naam likhein - jaise "Dr. Anita Dhar" ya "Dr. Sharma".',
-                doctor_query=doctor_query,
-                intent="doctor_schedule",
-                debug={"fast_path": "doctor_search", "reason": "empty_query"},
-            )
-
-        matches = search_doctor_by_name(doctor_query, hint_dept=hint_dept)
-        doctor_results = [{"dept": m["dept"], "doctor": m["doctor"]} for m in matches]
-        unique_names = set(m["doctor"]["name"] for m in matches)
-        ambiguous = len(unique_names) > 1 and len(doctor_query.split()) <= 1
-        reply = "" if matches else f'"{doctor_query.title()}" naam ke doctor AIIMS OPD database mein nahi mile.'
-        return _base_chat_response(
-            reply=reply,
-            doctor_results=doctor_results,
-            doctor_query=doctor_query,
-            ambiguous=ambiguous,
-            intent="doctor_schedule",
-            debug={"fast_path": "doctor_search", "match_count": len(matches)},
+            debug={"fast_path": "database_match", "mode": "infertility", "kind": infertility, "count": len(doctors)},
         )
 
     sub_request = detect_sub_specialty_request(sanitized)
@@ -773,7 +891,7 @@ def try_fast_path_chat(sanitized: str, active_intent: str) -> dict | None:
         doctors = get_todays_doctors(department)
         if sub_request:
             doctors = [r for r in doctors if _matches_sub_specialty(r["doctor"], sub_request["terms"])]
-        print(f"[FastPath] todays_doctors department='{department}' count={len(doctors)}")
+        print(f"[FastPath] database_match todays_doctors department='{department}' count={len(doctors)}")
         return _base_chat_response(
             reply=f"Aaj ke doctors neeche dekh sakte hain." if doctors else "Aaj ke liye doctors nahi mile.",
             department=department,
@@ -781,20 +899,21 @@ def try_fast_path_chat(sanitized: str, active_intent: str) -> dict | None:
             intent="browse_department",
             sub_specialty=(sub_request or {}).get("label"),
             debug={
-                "fast_path": "todays_doctors",
+                "fast_path": "database_match",
+                "mode": "todays_doctors",
                 "department": department,
                 "sub_specialty": (sub_request or {}).get("label"),
                 "count": len(doctors),
             },
         )
 
-    if sub_request or _is_browse_request(sanitized, active_intent):
+    if sub_request:
         department = (sub_request or {}).get("department") or extract_browse_dept(sanitized)
         if department and department != "Casualty / Emergency":
             sub_terms = (sub_request or {}).get("terms")
             doctors = _tag_dept_doctors(department, sub_terms)
             print(
-                f"[FastPath] browse_department department='{department}' "
+                f"[FastPath] database_match sub_specialty department='{department}' "
                 f"sub='{(sub_request or {}).get('label')}' count={len(doctors)}"
             )
             return _base_chat_response(
@@ -804,14 +923,58 @@ def try_fast_path_chat(sanitized: str, active_intent: str) -> dict | None:
                 intent="browse_department",
                 sub_specialty=(sub_request or {}).get("label"),
                 debug={
-                    "fast_path": "browse_department",
+                    "fast_path": "database_match",
+                    "mode": "sub_specialty",
                     "department": department,
                     "sub_specialty": (sub_request or {}).get("label"),
                     "count": len(doctors),
                 },
             )
 
+    service_match = search_database_by_service(sanitized)
+    if service_match and service_match["doctors"]:
+        print(
+            f"[FastPath] database_match service phrase='{service_match['label']}' "
+            f"department='{service_match['department']}' count={service_match['match_count']}"
+        )
+        return _base_chat_response(
+            reply=f"{service_match['label']} ke matching doctors neeche dekh sakte hain.",
+            department=service_match["department"],
+            doctors=service_match["doctors"],
+            intent="browse_department",
+            sub_specialty=service_match["label"],
+            debug={
+                "fast_path": "database_match",
+                "mode": "service_condition",
+                "department": service_match["department"],
+                "sub_specialty": service_match["label"],
+                "count": service_match["match_count"],
+            },
+        )
+
+    if _is_browse_request(sanitized, active_intent):
+        department = extract_browse_dept(sanitized)
+        if department and department != "Casualty / Emergency":
+            doctors = _tag_dept_doctors(department)
+            print(f"[FastPath] database_match browse_department department='{department}' count={len(doctors)}")
+            return _base_chat_response(
+                reply=f"{department} ke doctors neeche dekh sakte hain.",
+                department=department,
+                doctors=doctors,
+                intent="browse_department",
+                debug={
+                    "fast_path": "database_match",
+                    "mode": "browse_department",
+                    "department": department,
+                    "count": len(doctors),
+                },
+            )
+
     return None
+
+
+def try_fast_path_chat(sanitized: str, active_intent: str) -> dict | None:
+    return try_database_match_chat(sanitized, active_intent)
 
 
 def _sort_jpnatc_last(doctors: list) -> list:
@@ -1022,7 +1185,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
 
     print(f"[Input] raw='{raw_message[:60]}' sanitized='{sanitized[:60]}'")
 
-    fast_path_response = try_fast_path_chat(sanitized, active_intent)
+    fast_path_response = try_database_match_chat(sanitized, active_intent)
     if fast_path_response is not None:
         return fast_path_response
 
