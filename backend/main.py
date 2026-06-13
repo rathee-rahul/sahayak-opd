@@ -60,7 +60,7 @@ GEMINI_URL = (
     "/gemini-2.5-flash:generateContent"
 )
 
-app = FastAPI()
+app = FastAPI(title="Sahayak")
 
 app.add_middleware(
     CORSMiddleware,
@@ -69,7 +69,7 @@ app.add_middleware(
 
 frontend_path = os.path.join(os.path.dirname(__file__), "../frontend")
 if os.path.exists(frontend_path):
-    app.mount("/app", StaticFiles(directory=frontend_path, html=True), name="frontend")
+    app.mount("/app", StaticFiles(directory=frontend_path, html=True), name="sahayak")
 
 # ── LOAD DOCTOR DATA ──────────────────────────────────────────
 DOCTOR_DATA_PATH = os.path.join(os.path.dirname(__file__), "doctor_data.json")
@@ -376,20 +376,44 @@ def transliterate_hindi(text: str) -> str:
 
 def search_doctor_by_name(query: str, hint_dept: str = None):
     query_lower = query.strip().lower()
+    if not query_lower:
+        return []
 
+    def clean_name(name: str) -> str:
+        return re.sub(r'^(dr\.?|prof\.?)\s*', '', name.lower()).strip()
+
+    def is_clinic_slot(doc: dict) -> bool:
+        timing = (doc.get("opd_timing") or "").lower()
+        sub_specialty = (doc.get("sub_specialty") or "").strip()
+        notes = (doc.get("notes") or "").lower()
+        starts_after_2 = bool(re.search(r'\b(2|3|4|5|6)(?::\d{2})?\s*pm\b', timing))
+        return bool(sub_specialty) or "clinic" in notes or starts_after_2
+
+    query_clean = clean_name(query_lower)
     results = []
     for dept, doctors in DOCTOR_DATA.items():
         for doc in doctors:
             doc_name_lower = doc["name"].lower()
-            doc_name_clean = re.sub(r'^(dr\.?|prof\.?)\s*', '', doc_name_lower).strip()
+            doc_name_clean = clean_name(doc_name_lower)
             similarity = max(
                 fuzz.partial_ratio(query_lower, doc_name_lower),
                 fuzz.partial_ratio(query_lower, doc_name_clean),
             )
             if similarity >= 65:
                 score = similarity + (10 if hint_dept and dept == hint_dept else 0)
-                results.append({"dept": dept, "doctor": doc, "score": score})
-    results.sort(key=lambda x: -x["score"])
+                exact_name = query_clean == doc_name_clean or fuzz.token_set_ratio(query_clean, doc_name_clean) >= 98
+                results.append({
+                    "dept": dept,
+                    "doctor": doc,
+                    "score": score,
+                    "_exact_name": exact_name,
+                    "_clinic_slot": is_clinic_slot(doc),
+                })
+    results.sort(key=lambda x: (
+        0 if x["_exact_name"] else 1,
+        1 if x["_clinic_slot"] else 0,
+        -x["score"],
+    ))
     return results[:10]
 
 
@@ -759,12 +783,18 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
         doctor_query = doctor_query.strip()
         print(f"[Doctor] Extracted query: '{doctor_query}'")
 
+        if not doctor_query:
+            clinical["reply"] = (
+                "Kripya doctor ka naam likhein - jaise \"Dr. Anita Dhar\" ya \"Dr. Sharma\"."
+            )
+            print("[Doctor] Empty query")
+
         matches = search_doctor_by_name(doctor_query, hint_dept=final_dept)
         if matches:
             doctor_results = [{"dept": m["dept"], "doctor": m["doctor"]} for m in matches]
             unique_names   = set(m["doctor"]["name"] for m in matches)
             ambiguous      = len(unique_names) > 1 and len(doctor_query.split()) <= 1
-        else:
+        elif doctor_query:
             display_name = doctor_query.title() if len(doctor_query) <= 40 else "Yeh"
             clinical["reply"] = (
                 f"\"{display_name}\" naam ke doctor AIIMS OPD database mein nahi mile. "

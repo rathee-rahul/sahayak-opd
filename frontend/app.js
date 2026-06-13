@@ -1,6 +1,8 @@
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
-const BACKEND_URL = "https://sahayak-opd.onrender.com/chat";
-const BACKEND_BASE = BACKEND_URL.replace(/\/chat$/, "");
+const BACKEND_BASE =
+  window.SAHAYAK_BACKEND_BASE ||
+  (window.location.protocol === "file:" ? "http://localhost:8000" : window.location.origin);
+const BACKEND_URL = `${BACKEND_BASE}/chat`;
  
 // ─── STATE ────────────────────────────────────────────────────────────────────
 let conversationHistory = [];
@@ -146,9 +148,7 @@ function renderNameSearchResults(query, results, containerEl) {
       </span>
     </div>
     <div class="doctor-cards-scroll">
-      ${[...results]
-          .sort((a,b) => isDoctorAvailableToday(b.doctor.opd_days) - isDoctorAvailableToday(a.doctor.opd_days))
-          .map(r => buildCard(r.doctor, r.dept)).join("")}
+      ${results.map(r => buildCard(r.doctor, r.dept)).join("")}
     </div>
   `;
   containerEl.appendChild(wrapper);
@@ -297,25 +297,23 @@ function appendAdvisoryNote(containerEl) {
 }
  
 // ─── CHAT HELPERS ─────────────────────────────────────────────────────────────
-function appendMessage(role, text) {
+function appendMessage(role, text, trustedHtml = false) {
   const chat = document.getElementById("chatArea");
   const wrapper = document.createElement("div");
   wrapper.className = role === "user" ? "user-row" : "bot-row";
   const bubble = document.createElement("div");
   bubble.className = role === "user" ? "user-bubble" : "bot-bubble";
-  bubble.innerHTML = formatMessage(text);
+  bubble.innerHTML = formatMessage(text, trustedHtml);
   wrapper.appendChild(bubble);
   chat.appendChild(wrapper);
   chat.scrollTop = chat.scrollHeight;
   return wrapper;
 }
  
-function formatMessage(text) {
-  // Only treat as trusted HTML if it contains our known bilingual span classes
-  // (set internally by startSymptomFlow, startDoctorSearch, showEmergencyDirect).
-  // LLM replies and user messages always go through escapeHtml first.
-  const isTrustedHtml = /class="(hi|en)"/.test(text);
-  if (isTrustedHtml) {
+function formatMessage(text, trustedHtml = false) {
+  // Only explicit internal UI strings can render HTML. User input and backend
+  // replies always go through escaping first.
+  if (trustedHtml) {
     return text
       .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
       .replace(/\*(.*?)\*/g, "<em>$1</em>")
@@ -505,8 +503,8 @@ function setAge(val) {
 }
 
 function maybeCollapseChips() {
-  // Collapse row once age OR gender is filled (don't force both)
-  if (userAge || userGender) {
+  // Collapse row once both fields requested by the UI are filled.
+  if (userAge && userGender) {
     const row = document.getElementById("ageGenderRow");
     if (row) {
       row.classList.add("agr-done");
@@ -522,7 +520,7 @@ function startSymptomFlow() {
   deniedSymptoms = [];
   userAge    = null;
   userGender = null;
-  appendMessage('bot', '<span class="hi">अपनी तकलीफ बताइए — जैसे सिरदर्द, बुखार, पेट दर्द आदि।</span><span class="en">Please describe your symptoms.</span>');
+  appendMessage('bot', '<span class="hi">अपनी तकलीफ बताइए — जैसे सिरदर्द, बुखार, पेट दर्द आदि।</span><span class="en">Please describe your symptoms.</span>', true);
   showAgeGenderChips();
   const input = document.getElementById('chatInput');
   input.placeholder = 'अपने लक्षण लिखें… · Type your symptoms…';
@@ -532,7 +530,7 @@ function startSymptomFlow() {
 // ── TILE 2: Doctor Search ─────────────────────────────────────
 function startDoctorSearch() {
   activeIntent = 'doctor_schedule';
-  appendMessage('bot', '<span class="hi">डॉक्टर का नाम लिखें — जैसे "Dr. Anita Dhar" या "Dr. Sharma"</span><span class="en">Type the doctor name to find their OPD schedule.</span>');
+  appendMessage('bot', '<span class="hi">डॉक्टर का नाम लिखें — जैसे "Dr. Anita Dhar" या "Dr. Sharma"</span><span class="en">Type the doctor name to find their OPD schedule.</span>', true);
   const input = document.getElementById('chatInput');
   input.placeholder = 'डॉक्टर का नाम लिखें… · Type doctor name…';
   input.focus();
