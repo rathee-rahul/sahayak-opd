@@ -85,9 +85,10 @@ async function sendMessage(messageText) {
  
     const data = await res.json();
     removeTypingIndicator(typingEl);
+    const hasDoctorResults = data.doctor_results && data.doctor_results.length > 0;
 
     // Guard: if backend returned error or missing reply, show fallback
-    if (!res.ok || !data.reply) {
+    if (!res.ok || (!data.reply && !hasDoctorResults)) {
       appendMessage("bot", "माफ करें, कोई error आई। थोड़ी देर बाद try करें।");
       console.error("Backend error:", res.status, data);
       return;
@@ -99,25 +100,31 @@ async function sendMessage(messageText) {
     // Reset intent after every response — user must click a tile again to re-activate
     if (data.intent && data.intent !== 'doctor_schedule') activeIntent = null;
 
-    const msgWrapper = appendMessage("bot", data.reply);
-    if (data.show_advisory) appendAdvisoryNote(msgWrapper);
+    let msgWrapper = null;
+    if (!hasDoctorResults) {
+      msgWrapper = appendMessage("bot", data.reply);
+      if (data.show_advisory) appendAdvisoryNote(msgWrapper);
+    }
 
-    if (data.doctor_results && data.doctor_results.length > 0) {
+    if (hasDoctorResults) {
+      const chat = document.getElementById("chatArea");
       if (data.ambiguous) {
-        renderAmbiguousResults(data.doctor_query, data.doctor_results, msgWrapper);
+        renderAmbiguousResults(data.doctor_query, data.doctor_results, chat);
       } else {
-        renderNameSearchResults(data.doctor_query, data.doctor_results, msgWrapper);
+        renderNameSearchResults(data.doctor_query, data.doctor_results, chat);
       }
     }
 
     // Department doctors
-    if (!data.doctor_query && data.department && data.doctors && data.doctors.length > 0) {
+    if (msgWrapper && !data.doctor_query && data.department && data.doctors && data.doctors.length > 0) {
       renderDeptDoctors(data.department, data.doctors, msgWrapper, data.sub_specialty);
     }
 
-    conversationHistory.push({ role: "assistant", content: data.reply });
+    if (data.reply && !hasDoctorResults) {
+      conversationHistory.push({ role: "assistant", content: data.reply });
+    }
 
-    speakText(data.reply || "");
+    if (!hasDoctorResults) speakText(data.reply || "");
  
   } catch (err) {
     removeTypingIndicator(typingEl);

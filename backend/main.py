@@ -791,6 +791,7 @@ async def chat(request: ChatRequest, background_tasks: BackgroundTasks):
 
         matches = search_doctor_by_name(doctor_query, hint_dept=final_dept)
         if matches:
+            clinical["reply"] = ""
             doctor_results = [{"dept": m["dept"], "doctor": m["doctor"]} for m in matches]
             unique_names   = set(m["doctor"]["name"] for m in matches)
             ambiguous      = len(unique_names) > 1 and len(doctor_query.split()) <= 1
