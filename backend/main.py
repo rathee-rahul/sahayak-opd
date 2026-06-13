@@ -398,28 +398,43 @@ def search_doctor_by_name(query: str, hint_dept: str = None):
         starts_after_2 = bool(re.search(r'\b(2|3|4|5|6)(?::\d{2})?\s*pm\b', timing))
         return bool(sub_specialty) or "clinic" in notes or starts_after_2
 
+    def name_tokens(name: str) -> list:
+        return [t for t in re.split(r'[^a-z]+', name.lower()) if len(t) >= 2]
+
+    def all_query_tokens_prefix_match(query: str, name: str) -> bool:
+        query_parts = name_tokens(query)
+        name_parts = name_tokens(name)
+        if not query_parts:
+            return False
+        return all(any(part.startswith(q) for part in name_parts) for q in query_parts)
+
     query_clean = clean_name(query_lower)
     results = []
     for dept, doctors in DOCTOR_DATA.items():
         for doc in doctors:
             doc_name_lower = doc["name"].lower()
             doc_name_clean = clean_name(doc_name_lower)
+            prefix_match = all_query_tokens_prefix_match(query_clean, doc_name_clean)
             similarity = max(
                 fuzz.partial_ratio(query_lower, doc_name_lower),
                 fuzz.partial_ratio(query_lower, doc_name_clean),
             )
-            if similarity >= 65:
-                score = similarity + (10 if hint_dept and dept == hint_dept else 0)
+            if prefix_match or similarity >= 65:
+                score = similarity + (120 if prefix_match else 0) + (10 if hint_dept and dept == hint_dept else 0)
                 exact_name = query_clean == doc_name_clean or fuzz.token_set_ratio(query_clean, doc_name_clean) >= 98
                 results.append({
                     "dept": dept,
                     "doctor": doc,
                     "score": score,
                     "_exact_name": exact_name,
+                    "_prefix_match": prefix_match,
                     "_clinic_slot": is_clinic_slot(doc),
                 })
+    if any(r["_prefix_match"] for r in results):
+        results = [r for r in results if r["_prefix_match"]]
     results.sort(key=lambda x: (
         0 if x["_exact_name"] else 1,
+        0 if x["_prefix_match"] else 1,
         1 if x["_clinic_slot"] else 0,
         -x["score"],
     ))
