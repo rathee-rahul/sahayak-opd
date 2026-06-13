@@ -581,12 +581,31 @@ function closeDeptPicker(e) {
   }
 }
 
-function selectDepartment(dept) {
+async function selectDepartment(dept) {
   document.getElementById('deptPickerOverlay').classList.remove('active');
-  activeIntent = 'browse_department';
-  const msg = dept + ' mein kaun se doctors hain?';
-  document.getElementById('chatInput').value = msg;
-  sendMessage(msg);
+  activeIntent = null;
+  const input = document.getElementById('chatInput');
+  if (input) input.value = "";
+  appendMessage("user", dept);
+  const typingEl = showTypingIndicator();
+
+  try {
+    const res = await fetch(`${BACKEND_BASE}/doctors?department=${encodeURIComponent(dept)}`);
+    const data = await res.json();
+    removeTypingIndicator(typingEl);
+
+    if (!res.ok || !data.doctors || data.doctors.length === 0) {
+      appendMessage("bot", "Is department ke doctors abhi load nahi ho paaye. Kripya dobara try karein.");
+      console.error("Department doctors error:", res.status, data);
+      return;
+    }
+
+    renderDeptDoctors(data.department || dept, data.doctors, document.getElementById("chatArea"), data.sub_specialty);
+  } catch (err) {
+    removeTypingIndicator(typingEl);
+    appendMessage("bot", "Is department ke doctors abhi load nahi ho paaye. Kripya dobara try karein.");
+    console.error(err);
+  }
 }
 
 // ── TILE 4: Emergency Direct (no backend wait) ────────────────
