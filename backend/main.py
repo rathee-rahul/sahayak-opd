@@ -465,6 +465,16 @@ def _doctor_search_text(doc: dict) -> str:
     ]).lower()
 
 
+def _sort_tagged_doctors(doctors: list) -> list:
+    def _is_jpnatc(d):
+        return (d.get("center", "") or "").upper() == "JPNATC"
+
+    todays_main = [d for d in doctors if is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
+    others_main = [d for d in doctors if not is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
+    jpnatc_docs = [d for d in doctors if _is_jpnatc(d)]
+    return todays_main + others_main + jpnatc_docs
+
+
 def _matches_sub_specialty(doc: dict, terms: list) -> bool:
     if not terms:
         return True
@@ -499,6 +509,8 @@ def _sub_specialty_terms_from_text(text: str) -> list:
         (r"\b(genetic|genetics)\b", ["genetic"]),
         (r"\b(neonat|newborn|nicu|preterm)\b", ["neonat", "newborn", "nicu", "preterm"]),
         (r"\b(varicose|varicose vein|varicose veins)\b", ["varicose"]),
+        (r"\b(andrology|male infertility|low sperm|sperm|erectile|infertility|infertile)\b", ["infertility", "andrology"]),
+        (r"\b(reproductive endocrinology|female infertility|conceive|conception|not able to conceive|unable to conceive)\b", ["infertility", "reproductive"]),
     ]
     terms = []
     for pattern, pattern_terms in rules:
@@ -538,6 +550,59 @@ def detect_sub_specialty_request(message: str, department: str = None) -> dict |
     return None
 
 
+def _infertility_kind(message: str) -> str | None:
+    text = (message or "").lower()
+    has_infertility = bool(re.search(
+        r"\b(infertility|infertile|conceive|conception|andrology|low sperm|sperm|erectile)\b|not able to conceive|unable to conceive",
+        text
+    ))
+    if not has_infertility:
+        return None
+    if re.search(r"\b(male|man|men|andrology|sperm|erectile)\b", text):
+        return "male"
+    if re.search(r"\b(female|woman|women|lady|wife|pcos|conceive|conception)\b|not able to conceive|unable to conceive", text):
+        return "female"
+    return "general"
+
+
+def _collect_infertility_doctors(kind: str) -> list:
+    candidates = []
+
+    def add_matches(department: str, predicate):
+        for doc in DOCTOR_DATA.get(department, []):
+            if predicate(doc):
+                candidates.append({**doc, "_dept": department})
+
+    if kind in {"male", "general"}:
+        add_matches(
+            "Urology (Kidney & Urinary)",
+            lambda d: (
+                any(term in (d.get("sub_specialty") or "").lower() for term in ["andrology", "infertility"]) or
+                any(term in (d.get("conditions") or "").lower() for term in ["male infertility", "low sperm"])
+            ),
+        )
+
+    if kind in {"female", "general"}:
+        add_matches(
+            "Obstetrics & Gynaecology",
+            lambda d: "infertility" in _doctor_search_text(d),
+        )
+        add_matches(
+            "Endocrinology (Diabetes & Hormones)",
+            lambda d: any(term in _doctor_search_text(d) for term in ["reproductive endocrinology", "infertility"]),
+        )
+
+    seen = set()
+    deduped = []
+    for doc in candidates:
+        key = (doc.get("_dept", ""), doc.get("name", "").lower().strip())
+        if key not in seen:
+            seen.add(key)
+            deduped.append(doc)
+
+    return _sort_tagged_doctors(deduped)
+
+
 def _base_chat_response(
     *,
     reply: str = "",
@@ -548,6 +613,7 @@ def _base_chat_response(
     ambiguous: bool = False,
     intent: str = "general",
     show_advisory: bool = False,
+    sub_specialty: str = None,
     debug: dict = None,
 ) -> dict:
     return {
@@ -567,6 +633,7 @@ def _base_chat_response(
         "doctor_results": doctor_results or [],
         "doctor_query": doctor_query,
         "ambiguous": ambiguous,
+        "sub_specialty": sub_specialty,
         "debug": debug or {},
         "today": get_today_name(),
         "intent": intent,
@@ -604,16 +671,9 @@ def _extract_doctor_query(message: str) -> str:
 
 def _tag_dept_doctors(department: str, sub_specialty_terms: list = None) -> list:
     all_docs = DOCTOR_DATA.get(department, [])
-
-    def _is_jpnatc(d):
-        return (d.get("center", "") or "").upper() == "JPNATC"
-
     matched_docs = [d for d in all_docs if _matches_sub_specialty(d, sub_specialty_terms)]
     tagged_docs = [{**d, "_dept": department} for d in matched_docs]
-    todays_main = [d for d in tagged_docs if is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
-    others_main = [d for d in tagged_docs if not is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
-    jpnatc_docs = [d for d in tagged_docs if _is_jpnatc(d)]
-    return todays_main + others_main + jpnatc_docs
+    return _sort_tagged_doctors(tagged_docs)
 
 
 def _is_doctor_search_request(message: str, active_intent: str) -> bool:
@@ -657,6 +717,29 @@ def try_fast_path_chat(sanitized: str, active_intent: str) -> dict | None:
             debug={"fast_path": "emergency_info"},
         )
 
+    infertility = _infertility_kind(sanitized)
+    if infertility:
+        doctors = _collect_infertility_doctors(infertility)
+        label = {
+            "male": "Male Infertility / Andrology",
+            "female": "Female Infertility",
+            "general": "Infertility",
+        }[infertility]
+        department = {
+            "male": "Urology (Kidney & Urinary)",
+            "female": "Obstetrics & Gynaecology",
+            "general": "Infertility Clinic",
+        }[infertility]
+        print(f"[FastPath] infertility kind='{infertility}' count={len(doctors)}")
+        return _base_chat_response(
+            reply=f"{label} ke doctors neeche dekh sakte hain." if doctors else f"{label} ke doctors abhi database mein nahi mile.",
+            department=department,
+            doctors=doctors,
+            intent="browse_department",
+            sub_specialty=label,
+            debug={"fast_path": "infertility", "kind": infertility, "count": len(doctors)},
+        )
+
     if _is_doctor_search_request(sanitized, active_intent):
         doctor_query = _extract_doctor_query(sanitized)
         hint_dept = extract_browse_dept(sanitized) if "," in sanitized else None
@@ -696,6 +779,7 @@ def try_fast_path_chat(sanitized: str, active_intent: str) -> dict | None:
             department=department,
             doctors=[{**r["doctor"], "_dept": r["dept"]} for r in doctors],
             intent="browse_department",
+            sub_specialty=(sub_request or {}).get("label"),
             debug={
                 "fast_path": "todays_doctors",
                 "department": department,
@@ -718,6 +802,7 @@ def try_fast_path_chat(sanitized: str, active_intent: str) -> dict | None:
                 department=department,
                 doctors=doctors,
                 intent="browse_department",
+                sub_specialty=(sub_request or {}).get("label"),
                 debug={
                     "fast_path": "browse_department",
                     "department": department,
