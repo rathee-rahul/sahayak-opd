@@ -183,8 +183,13 @@ _CONCEPT_KEYWORDS = {
     "child":     "Paediatrics Medicine (Children)",
     "pet":       "Gastroenterology (Stomach & Digestion)",
     "stomach":   "Gastroenterology (Stomach & Digestion)",
+    "pulmo":     "Pulmonary Medicine",
+    "pulmonary": "Pulmonary Medicine",
+    "pulmonology": "Pulmonary Medicine",
     "lungs":     "Pulmonary Medicine",
     "sans":      "Pulmonary Medicine",
+    "nephro":    "Nephrology",
+    "nephrology": "Nephrology",
     "mental":    "Psychiatry (Mental Health)",
     "mansik":    "Psychiatry (Mental Health)",
     "teeth":     "Dental Surgery",
@@ -451,14 +456,86 @@ def get_todays_doctors(department: str = None) -> list:
     return results
 
 
+def _doctor_search_text(doc: dict) -> str:
+    return " ".join([
+        doc.get("sub_specialty", "") or "",
+        doc.get("conditions", "") or "",
+        doc.get("unit", "") or "",
+        doc.get("notes", "") or "",
+    ]).lower()
+
+
+def _matches_sub_specialty(doc: dict, terms: list) -> bool:
+    if not terms:
+        return True
+    specialty = (doc.get("sub_specialty") or "").lower()
+    return bool(specialty) and any(term in specialty for term in terms)
+
+
 def filter_by_sub_specialty(doctors: list, sub_specialty: str) -> list:
     if not sub_specialty:
         return doctors
-    keyword = sub_specialty.lower()
-    return [
-        doc for doc in doctors
-        if keyword in (doc.get("sub_specialty", "") + " " + doc.get("conditions", "")).lower()
+    terms = _sub_specialty_terms_from_text(sub_specialty)
+    return [doc for doc in doctors if _matches_sub_specialty(doc, terms)]
+
+
+def _has_paediatric_context(text: str) -> bool:
+    return bool(re.search(
+        r"\b(paed|paeds|peds|pedia|pediatric|paediatric|child|children|bachcha|bachche|bachon|bacho)\b",
+        text
+    ))
+
+
+def _sub_specialty_terms_from_text(text: str) -> list:
+    text = (text or "").lower()
+    rules = [
+        (r"\b(nephro|nephrology|kidney|renal)\b", ["nephrol", "kidney", "renal"]),
+        (r"\b(pulmo|pulmonology|pulmonary|lung|asthma|chest)\b", ["pulmonol", "lung", "asthma"]),
+        (r"\b(neuro|neurology|seizure|epilepsy|autism|developmental)\b", ["neurolog", "seizure", "epilepsy", "autism", "development"]),
+        (r"\b(endocrine|endocrinology|diabetes|thyroid|growth|hormone)\b", ["endocrin", "diabetes", "thyroid", "growth"]),
+        (r"\b(onco|oncology|cancer|leukaemia|leukemia|tumou?r)\b", ["oncol", "cancer", "leukaemia", "leukemia", "tumour", "tumor"]),
+        (r"\b(rheum|rheumatology|arthritis|autoimmune|joint)\b", ["rheumatol", "arthritis", "autoimmune"]),
+        (r"\b(gastro|gi|hepatobiliary|liver|stomach)\b", ["gastro", "gi", "hepatobiliary", "liver"]),
+        (r"\b(genetic|genetics)\b", ["genetic"]),
+        (r"\b(neonat|newborn|nicu|preterm)\b", ["neonat", "newborn", "nicu", "preterm"]),
+        (r"\b(varicose|varicose vein|varicose veins)\b", ["varicose"]),
     ]
+    terms = []
+    for pattern, pattern_terms in rules:
+        if re.search(pattern, text):
+            terms.extend(pattern_terms)
+    return list(dict.fromkeys(terms))
+
+
+def detect_sub_specialty_request(message: str, department: str = None) -> dict | None:
+    text = (message or "").lower()
+    is_paeds = _has_paediatric_context(text)
+    terms = _sub_specialty_terms_from_text(text)
+
+    if is_paeds and terms:
+        return {
+            "department": "Paediatrics Medicine (Children)",
+            "terms": terms,
+            "label": "Paediatric " + ", ".join(terms[:2]).title(),
+        }
+
+    if re.search(r"\b(varicose|varicose vein|varicose veins)\b", text):
+        return {
+            "department": "Surgery (General)",
+            "terms": ["varicose"],
+            "label": "Varicose Vein",
+        }
+
+    if department:
+        dept_lower = department.lower()
+        if "paediatric" in dept_lower or "paediatrics" in dept_lower:
+            dept_terms = terms
+        else:
+            dept_terms = [t for t in terms if t not in {"nephrol", "pulmonol"} or t in dept_lower]
+        if dept_terms:
+            return {"department": department, "terms": dept_terms, "label": ", ".join(dept_terms[:2]).title()}
+
+    return None
 
 
 def _base_chat_response(
@@ -525,13 +602,14 @@ def _extract_doctor_query(message: str) -> str:
     return cleaned if len(cleaned) <= 40 else text
 
 
-def _tag_dept_doctors(department: str) -> list:
+def _tag_dept_doctors(department: str, sub_specialty_terms: list = None) -> list:
     all_docs = DOCTOR_DATA.get(department, [])
 
     def _is_jpnatc(d):
         return (d.get("center", "") or "").upper() == "JPNATC"
 
-    tagged_docs = [{**d, "_dept": department} for d in all_docs]
+    matched_docs = [d for d in all_docs if _matches_sub_specialty(d, sub_specialty_terms)]
+    tagged_docs = [{**d, "_dept": department} for d in matched_docs]
     todays_main = [d for d in tagged_docs if is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
     others_main = [d for d in tagged_docs if not is_available_today(d.get("opd_days", "")) and not _is_jpnatc(d)]
     jpnatc_docs = [d for d in tagged_docs if _is_jpnatc(d)]
@@ -555,7 +633,7 @@ def _is_browse_request(message: str, active_intent: str) -> bool:
     if active_intent == "browse_department":
         return True
     return bool(re.search(
-        r"\b(doctors?|doctor list|opd list|department|dept|kaun|dikhao|list|schedule|mein kaun|ke doctors|ki list)\b",
+        r"\b(dr|doctors?|doctor list|opd list|department|dept|kaun|dikhao|list|schedule|mein kaun|ke doctors|ki list)\b",
         text
     ))
 
@@ -605,29 +683,47 @@ def try_fast_path_chat(sanitized: str, active_intent: str) -> dict | None:
             debug={"fast_path": "doctor_search", "match_count": len(matches)},
         )
 
+    sub_request = detect_sub_specialty_request(sanitized)
+
     if _is_today_request(sanitized):
-        department = extract_browse_dept(sanitized)
+        department = (sub_request or {}).get("department") or extract_browse_dept(sanitized)
         doctors = get_todays_doctors(department)
+        if sub_request:
+            doctors = [r for r in doctors if _matches_sub_specialty(r["doctor"], sub_request["terms"])]
         print(f"[FastPath] todays_doctors department='{department}' count={len(doctors)}")
         return _base_chat_response(
             reply=f"Aaj ke doctors neeche dekh sakte hain." if doctors else "Aaj ke liye doctors nahi mile.",
             department=department,
             doctors=[{**r["doctor"], "_dept": r["dept"]} for r in doctors],
             intent="browse_department",
-            debug={"fast_path": "todays_doctors", "department": department, "count": len(doctors)},
+            debug={
+                "fast_path": "todays_doctors",
+                "department": department,
+                "sub_specialty": (sub_request or {}).get("label"),
+                "count": len(doctors),
+            },
         )
 
-    if _is_browse_request(sanitized, active_intent):
-        department = extract_browse_dept(sanitized)
+    if sub_request or _is_browse_request(sanitized, active_intent):
+        department = (sub_request or {}).get("department") or extract_browse_dept(sanitized)
         if department and department != "Casualty / Emergency":
-            doctors = _tag_dept_doctors(department)
-            print(f"[FastPath] browse_department department='{department}' count={len(doctors)}")
+            sub_terms = (sub_request or {}).get("terms")
+            doctors = _tag_dept_doctors(department, sub_terms)
+            print(
+                f"[FastPath] browse_department department='{department}' "
+                f"sub='{(sub_request or {}).get('label')}' count={len(doctors)}"
+            )
             return _base_chat_response(
                 reply=f"{department} ke doctors neeche dekh sakte hain.",
                 department=department,
                 doctors=doctors,
                 intent="browse_department",
-                debug={"fast_path": "browse_department", "department": department, "count": len(doctors)},
+                debug={
+                    "fast_path": "browse_department",
+                    "department": department,
+                    "sub_specialty": (sub_request or {}).get("label"),
+                    "count": len(doctors),
+                },
             )
 
     return None
@@ -751,6 +847,10 @@ def fetch_doctors_for_dept(department: str, raw_message: str, features: dict = N
     def _is_jpnatc(d): return (d.get("center", "") or "").upper() == "JPNATC"
 
     sub_spec_keywords = []
+    sub_request = detect_sub_specialty_request(raw_message, department)
+    if sub_request and sub_request["department"] == department:
+        sub_spec_keywords.extend(sub_request["terms"])
+
     if features:
         primary   = (features.get("primary_complaint") or "").lower()
         age       = features.get("age")
@@ -771,11 +871,12 @@ def fetch_doctors_for_dept(department: str, raw_message: str, features: dict = N
             if any(w in all_symptoms for w in ["diabetes", "thyroid", "growth", "hormone", "endocrin"]):
                 sub_spec_keywords.append("endocrin")
 
+    sub_spec_keywords = list(dict.fromkeys(sub_spec_keywords))
+
     def _matches_sub_spec(d):
         if not sub_spec_keywords:
             return False
-        combined = (d.get("sub_specialty", "") + " " + d.get("conditions", "")).lower()
-        return any(kw in combined for kw in sub_spec_keywords)
+        return _matches_sub_specialty(d, sub_spec_keywords)
 
     all_matches = search_by_condition(raw_message, preferred_dept=department)
     dept_matches = [m for m in all_matches if m["dept"] == department]
