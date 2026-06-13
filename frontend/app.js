@@ -583,7 +583,7 @@ function closeDeptPicker(e) {
 
 function selectDepartment(dept) {
   document.getElementById('deptPickerOverlay').classList.remove('active');
-  activeIntent = null;  // ensure browse is not treated as doctor search
+  activeIntent = 'browse_department';
   const msg = dept + ' mein kaun se doctors hain?';
   document.getElementById('chatInput').value = msg;
   sendMessage(msg);

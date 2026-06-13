@@ -224,6 +224,15 @@ _CONCEPT_KEYWORDS = {
 def extract_browse_dept(message: str) -> str | None:
     msg_lower = message.lower()
 
+    # Department picker messages include the exact department name. Prefer that
+    # before fuzzy matching so "Dental Surgery" is not reduced to "Surgery".
+    for dept in sorted(DEPARTMENTS, key=len, reverse=True):
+        short_name = dept.split("(")[0].strip().lower()
+        full_name = dept.lower()
+        if full_name in msg_lower or short_name in msg_lower:
+            print(f"[Browse] Exact department: '{dept}'")
+            return dept
+
     best_dept  = None
     best_score = 0
 
