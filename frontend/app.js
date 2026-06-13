@@ -1,7 +1,9 @@
 // ─── CONFIG ───────────────────────────────────────────────────────────────────
 const BACKEND_BASE =
   window.SAHAYAK_BACKEND_BASE ||
-  (window.location.protocol === "file:" ? "http://localhost:8000" : window.location.origin);
+  (["localhost", "127.0.0.1"].includes(window.location.hostname) || window.location.protocol === "file:"
+    ? "http://localhost:8000"
+    : "https://sahayak-opd.onrender.com");
 const BACKEND_URL = `${BACKEND_BASE}/chat`;
  
 // ─── STATE ────────────────────────────────────────────────────────────────────
